@@ -14,6 +14,7 @@ import (
 	"pw/internal/project"
 	"pw/internal/state"
 	"pw/internal/ui"
+	"pw/internal/version"
 )
 
 func expandTilde(path string) string {
@@ -32,12 +33,20 @@ func expandTilde(path string) string {
 
 func main() {
 	rootFlag := flag.String("root", "", "root directory to scan for projects")
+	versionFlag := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
+	if *versionFlag {
+		fmt.Println("pw version", version.Version)
+		os.Exit(0)
+	}
+
 	// Load config.json (best-effort, non-fatal)
-	cfg, cfgErr := config.Load()
+	cfg, cfgFound, cfgErr := config.Load()
 	if cfgErr != nil {
 		fmt.Fprintln(os.Stderr, "warning: config.json:", cfgErr)
+	} else if !cfgFound {
+		fmt.Fprintln(os.Stderr, "info: no config.json found next to pw binary; using flag, PW_ROOT env, or ~/work as root")
 	}
 
 	// Resolve root: flag > PW_ROOT env > config.json > $HOME/work
@@ -106,7 +115,7 @@ func main() {
 	defer ttyClose()
 
 	renderer := lipgloss.NewRenderer(ttyOut)
-	model := ui.New(root, projects, store.Recent, renderer)
+	model := ui.New(root, projects, store.Recent, renderer, version.Version)
 
 	p := tea.NewProgram(
 		model,

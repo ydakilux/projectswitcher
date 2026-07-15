@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/sahilm/fuzzy"
 
+	"pw/internal/gitinfo"
 	"pw/internal/preview"
 	"pw/internal/project"
 )
@@ -21,6 +22,8 @@ import (
 type styles struct {
 	header      lipgloss.Style
 	gitRepo     lipgloss.Style
+	behindTag   lipgloss.Style
+	aheadTag    lipgloss.Style
 	normal      lipgloss.Style
 	cursor      lipgloss.Style
 	recentTag   lipgloss.Style
@@ -38,6 +41,8 @@ func newStyles(r *lipgloss.Renderer) styles {
 	return styles{
 		header:      r.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
 		gitRepo:     r.NewStyle().Foreground(lipgloss.Color("10")),
+		behindTag:   r.NewStyle().Bold(true).Foreground(lipgloss.Color("9")),
+		aheadTag:    r.NewStyle().Bold(true).Foreground(lipgloss.Color("10")),
 		normal:      r.NewStyle(),
 		cursor:      r.NewStyle().Reverse(true).Bold(true),
 		recentTag:   r.NewStyle().Foreground(lipgloss.Color("8")),
@@ -61,6 +66,13 @@ type navFrame struct {
 type previewLoadedMsg struct {
 	path string
 	data preview.Preview
+}
+
+// pullResultMsg is sent when an async `git pull` finishes.
+type pullResultMsg struct {
+	path   string
+	output string
+	err    error
 }
 
 // projectSource implements fuzzy.Source for fuzzy matching.
@@ -88,10 +100,13 @@ type Model struct {
 	width        int
 	height       int
 	styles       styles
+	version      string
+	pulling      bool
+	pullStatus   string
 }
 
 // New creates a new Model bound to the given tty renderer.
-func New(root string, projects []project.Project, recent map[string]int64, renderer *lipgloss.Renderer) Model {
+func New(root string, projects []project.Project, recent map[string]int64, renderer *lipgloss.Renderer, version string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "filter projects..."
 	ti.Focus()
@@ -107,6 +122,7 @@ func New(root string, projects []project.Project, recent map[string]int64, rende
 		width:        80,
 		height:       24,
 		styles:       newStyles(renderer),
+		version:      version,
 	}
 	m.filtered = m.sortedProjects("")
 	return m
@@ -195,6 +211,27 @@ func (m Model) loadPreviewCmd() tea.Cmd {
 	}
 }
 
+// forceLoadPreviewCmd reloads preview for the current cursor item,
+// bypassing the cache (used after a git pull to refresh status/log).
+func (m Model) forceLoadPreviewCmd() tea.Cmd {
+	if len(m.filtered) == 0 {
+		return nil
+	}
+	p := m.filtered[m.cursor]
+	return func() tea.Msg {
+		data := preview.Build(p)
+		return previewLoadedMsg{path: p.Path, data: data}
+	}
+}
+
+// pullCmd runs `git pull` on the given project path asynchronously.
+func pullCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		out, err := gitinfo.Pull(path)
+		return pullResultMsg{path: path, output: out, err: err}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -213,6 +250,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewVP.SetContent(m.renderPreviewContent())
 		}
 		return m, nil
+
+	case pullResultMsg:
+		m.pulling = false
+		if msg.err != nil {
+			m.pullStatus = "pull failed: " + firstLine(msg.output, msg.err)
+		} else {
+			m.pullStatus = "pull ok: " + firstLine(msg.output, nil)
+		}
+		delete(m.previewCache, msg.path)
+		var cmd tea.Cmd
+		if len(m.filtered) > 0 && m.filtered[m.cursor].Path == msg.path {
+			cmd = m.forceLoadPreviewCmd()
+		}
+		return m, cmd
 
 	case tea.KeyMsg:
 		switch msg.Type {
@@ -284,6 +335,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case tea.KeyCtrlR:
+			if len(m.filtered) > 0 {
+				p := m.filtered[m.cursor]
+				if p.IsGit && !m.pulling {
+					m.pulling = true
+					m.pullStatus = ""
+					return m, pullCmd(p.Path)
+				}
+			}
+			return m, nil
+
 		case tea.KeyCtrlU:
 			// Clear filter
 			m.filterInput.SetValue("")
@@ -337,6 +399,19 @@ func truncate(s string, maxW int) string {
 		return "…"
 	}
 	return string(runes[:maxW-1]) + "…"
+}
+
+// firstLine returns the first non-empty line of s, or err's message if s is empty.
+func firstLine(s string, err error) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		if err != nil {
+			return err.Error()
+		}
+		return "(no output)"
+	}
+	lines := strings.Split(s, "\n")
+	return strings.TrimSpace(lines[0])
 }
 
 // humanizeAge converts a unix timestamp to a relative string.
@@ -495,16 +570,36 @@ func (m Model) renderPreviewContent() string {
 		if pv.Git.Dirty {
 			dirtyStr = "dirty"
 		}
-		line := pv.Git.Branch + " · " + dirtyStr
-		if pv.Git.Ahead > 0 || pv.Git.Behind > 0 {
-			line += fmt.Sprintf(" · ↑%d ↓%d", pv.Git.Ahead, pv.Git.Behind)
+		sb.WriteString(m.styles.gitRepo.Render(pv.Git.Branch))
+		if pv.Git.Behind > 0 {
+			sb.WriteString(" " + m.styles.behindTag.Render(fmt.Sprintf("↓%d", pv.Git.Behind)))
 		}
-		sb.WriteString(m.styles.gitRepo.Render(line))
+		if pv.Git.Ahead > 0 {
+			sb.WriteString(" " + m.styles.aheadTag.Render(fmt.Sprintf("↑%d", pv.Git.Ahead)))
+		}
+		sb.WriteString(m.styles.gitRepo.Render(" · " + dirtyStr))
 	}
 	sb.WriteString("\n")
 
 	if p.IsGit && pv.Git.Available && pv.Git.Err == nil {
 		sb.WriteString("Last commit: " + pv.Git.LastCommit + "\n")
+		if !pv.Git.LastSync.IsZero() {
+			sb.WriteString("Last synced: " + humanizeAge(pv.Git.LastSync.Unix()) + "\n")
+		} else {
+			sb.WriteString("Last synced: never\n")
+		}
+		if pv.Git.Upstream != "" {
+			switch {
+			case pv.Git.Behind > 0 && pv.Git.Ahead > 0:
+				sb.WriteString(m.styles.behindTag.Render(fmt.Sprintf("%d commits behind, %d ahead of %s", pv.Git.Behind, pv.Git.Ahead, pv.Git.Upstream)) + "\n")
+			case pv.Git.Behind > 0:
+				sb.WriteString(m.styles.behindTag.Render(fmt.Sprintf("%d commits behind %s", pv.Git.Behind, pv.Git.Upstream)) + "\n")
+			case pv.Git.Ahead > 0:
+				sb.WriteString(m.styles.gitRepo.Render(fmt.Sprintf("%d commits ahead of %s", pv.Git.Ahead, pv.Git.Upstream)) + "\n")
+			default:
+				sb.WriteString(m.styles.sep.Render("up to date with "+pv.Git.Upstream) + "\n")
+			}
+		}
 	}
 
 	sb.WriteString("\n")
@@ -537,7 +632,25 @@ func (m Model) View() string {
 	previewContent := m.previewVP.View()
 
 	// Help bar
-	help := m.styles.help.Render("↑/↓ move · → open · ← back · enter switch · esc back/quit · ^c quit · ^u clear · ^d/^b scroll")
+	helpText := "↑↓ move · → open · ← back · ↵ switch · ^r pull · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
+	if m.pulling {
+		helpText = "pulling…"
+	} else if m.pullStatus != "" {
+		helpText = m.pullStatus
+	}
+	verText := "v" + m.version
+	avail := m.width - len([]rune(verText)) - 1
+	if avail < 1 {
+		avail = 1
+	}
+	helpText = truncate(helpText, avail)
+	pad := m.width - len([]rune(helpText)) - len([]rune(verText)) - 1
+	var help string
+	if pad > 0 {
+		help = m.styles.help.Render(helpText + strings.Repeat(" ", pad) + verText)
+	} else {
+		help = m.styles.help.Render(helpText)
+	}
 
 	// Build panes — use renderer-bound styles for layout too
 	leftPane := m.styles.paneBorder.Width(listW).Render(listContent)
