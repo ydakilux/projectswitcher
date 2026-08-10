@@ -69,6 +69,15 @@ func main() {
 	// Expand leading ~
 	root = expandTilde(root)
 
+	// Resolve editor command: PW_EDITOR env > config.json > "code"
+	editor := os.Getenv("PW_EDITOR")
+	if editor == "" {
+		editor = cfg.Editor
+	}
+	if editor == "" {
+		editor = "code"
+	}
+
 	// Resolve to absolute path
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -114,8 +123,13 @@ func main() {
 	}
 	defer ttyClose()
 
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = ""
+	}
+
 	renderer := lipgloss.NewRenderer(ttyOut)
-	model := ui.New(root, projects, store.Recent, renderer, version.Version)
+	model := ui.New(root, projects, store.Recent, renderer, version.Version, cwd, editor)
 
 	p := tea.NewProgram(
 		model,
@@ -137,6 +151,8 @@ func main() {
 		store.Touch(path)
 		_ = store.Save()
 		fmt.Println(path)
+		fmt.Println(m.SelectedAction())
+		fmt.Println(m.SelectedEditor())
 		os.Exit(0)
 	}
 

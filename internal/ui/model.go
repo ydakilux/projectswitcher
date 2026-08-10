@@ -97,6 +97,8 @@ type Model struct {
 	previewCache map[string]preview.Preview
 	selectedPath string
 	confirmed    bool
+	action       string
+	editor       string
 	width        int
 	height       int
 	styles       styles
@@ -105,8 +107,11 @@ type Model struct {
 	pullStatus   string
 }
 
-// New creates a new Model bound to the given tty renderer.
-func New(root string, projects []project.Project, recent map[string]int64, renderer *lipgloss.Renderer, version string) Model {
+// New creates a new Model bound to the given tty renderer. If cwd is a
+// directory under root, the switcher opens with the nav stack descended
+// down to and the cursor on the active subfolder matching cwd. editor is
+// the configured file editor command used by the "open in editor" shortcut.
+func New(root string, projects []project.Project, recent map[string]int64, renderer *lipgloss.Renderer, version string, cwd string, editor string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "filter projects..."
 	ti.Focus()
@@ -123,8 +128,60 @@ func New(root string, projects []project.Project, recent map[string]int64, rende
 		height:       24,
 		styles:       newStyles(renderer),
 		version:      version,
+		editor:       editor,
 	}
 	m.filtered = m.sortedProjects("")
+	m = m.descendToCwd(cwd)
+	return m
+}
+
+// descendToCwd walks the nav stack down into the directory the user is
+// currently in (if it's under root), so the switcher opens with the cursor
+// on the active subfolder instead of always starting at the root level.
+func (m Model) descendToCwd(cwd string) Model {
+	if cwd == "" {
+		return m
+	}
+	rel, err := filepath.Rel(m.root, cwd)
+	if err != nil || rel == "." || rel == "" || strings.HasPrefix(rel, "..") {
+		return m
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		idx := -1
+		for i, p := range m.filtered {
+			if p.Name == part {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			break
+		}
+		m.cursor = idx
+		p := m.filtered[idx]
+		if p.IsGit {
+			break
+		}
+		children, err := project.Scan(p.Path)
+		if err != nil || len(children) == 0 {
+			break
+		}
+		m.stack = append(m.stack, navFrame{
+			dir:         m.currentDir,
+			items:       m.all,
+			cursor:      m.cursor,
+			filterValue: m.filterInput.Value(),
+		})
+		m.currentDir = p.Path
+		m.all = children
+		m.filterInput.SetValue("")
+		m.filtered = m.sortedProjects("")
+		m.cursor = 0
+	}
 	return m
 }
 
@@ -316,6 +373,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.filtered) > 0 {
 				m.confirmed = true
 				m.selectedPath = m.filtered[m.cursor].Path
+			}
+			return m, tea.Quit
+
+		case tea.KeyCtrlO:
+			if len(m.filtered) > 0 {
+				m.confirmed = true
+				m.selectedPath = m.filtered[m.cursor].Path
+				m.action = "opencode"
+			}
+			return m, tea.Quit
+
+		case tea.KeyCtrlE:
+			if len(m.filtered) > 0 {
+				m.confirmed = true
+				m.selectedPath = m.filtered[m.cursor].Path
+				m.action = "editor"
 			}
 			return m, tea.Quit
 
@@ -632,7 +705,7 @@ func (m Model) View() string {
 	previewContent := m.previewVP.View()
 
 	// Help bar
-	helpText := "↑↓ move · → open · ← back · ↵ switch · ^r pull · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
+	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^r pull · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
 	if m.pulling {
 		helpText = "pulling…"
 	} else if m.pullStatus != "" {
@@ -664,4 +737,17 @@ func (m Model) View() string {
 // SelectedPath returns the selected path and confirmation status.
 func (m Model) SelectedPath() (string, bool) {
 	return m.selectedPath, m.confirmed
+}
+
+// SelectedAction returns the requested post-selection action, if any
+// (e.g. "opencode" to launch the opencode CLI, "editor" to launch the
+// configured file editor, both in the selected directory).
+func (m Model) SelectedAction() string {
+	return m.action
+}
+
+// SelectedEditor returns the configured editor command (used when
+// SelectedAction() == "editor").
+func (m Model) SelectedEditor() string {
+	return m.editor
 }

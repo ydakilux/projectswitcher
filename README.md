@@ -2,6 +2,8 @@
 
 A terminal UI (TUI) fuzzy project switcher. Lists directories under a root folder, lets you filter/select one, and `cd`s into it via a shell wrapper.
 
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Build & Install
 
 ```bash
@@ -52,9 +54,12 @@ Place a `config.json` file in the **same directory as the `pw` binary** (e.g. `~
 
 **Schema:**
 ```json
-{"root": "/home/you/projects"}
+{
+  "root": "/home/you/projects",
+  "editor": "code"
+}
 ```
-or with tilde expansion:
+or with tilde expansion for `root`:
 ```json
 {"root": "~/projects"}
 ```
@@ -66,6 +71,27 @@ or with tilde expansion:
 echo '{"root": "~/projects"}' > ~/go/bin/config.json
 ```
 
+## Launch Shortcuts
+
+Besides `Enter` (select & `cd`), two shortcuts select the highlighted
+project, `cd` into it, and launch an external tool:
+
+| Shortcut | Launches |
+|----------|----------|
+| `Ctrl+O` | [`opencode`](https://opencode.ai) |
+| `Ctrl+E` | Configured editor (see below) |
+
+### Editor configuration
+
+`Ctrl+E` opens the selected project in a configurable editor command. Set it
+via the `editor` field in `config.json`:
+
+```json
+{"editor": "code"}
+```
+
+**Precedence:** `PW_EDITOR` env var > `config.json` `editor` field > `code` (default).
+
 ## Keybindings
 
 | Key | Action |
@@ -75,7 +101,9 @@ echo '{"root": "~/projects"}' > ~/go/bin/config.json
 | `Ctrl+P` / `Ctrl+N` | Move cursor up/down |
 | `→` (Right) | Descend into highlighted folder (non-git container) |
 | `←` (Left) | Go back to parent level |
-| `Enter` | Select project & cd (works at any depth) |
+| `Enter` | Select project & `cd` (works at any depth) |
+| `Ctrl+O` | Select project, `cd`, and launch `opencode` |
+| `Ctrl+E` | Select project, `cd`, and open in the configured editor |
 | `Esc` | Go back one level, or cancel at root |
 | `Ctrl+C` | Cancel immediately (any depth) |
 | `Ctrl+U` | Clear filter |
@@ -86,7 +114,7 @@ echo '{"root": "~/projects"}' > ~/go/bin/config.json
 
 - **git is optional**: if the `git` binary is not on `PATH`, git info is omitted gracefully — the rest of the UI works fine.
 - Recent projects float to the top of the unfiltered list with a relative timestamp (e.g. "2h ago").
-- The binary writes **only** the selected path to stdout (for shell capture). All other output goes to stderr or `/dev/tty`.
+- The binary writes its result to stdout as up to three lines — selected path, launch action (empty, `opencode`, or `editor`), and editor command — consumed by the shell wrapper. All interactive UI output goes to stderr or `/dev/tty`.
 - **State file location:**
   - Linux/macOS: `$XDG_STATE_HOME/pw/recent.json` (default: `~/.local/state/pw/recent.json`)
   - Windows: `%LOCALAPPDATA%\pw\recent.json` (e.g. `C:\Users\you\AppData\Local\pw\recent.json`)

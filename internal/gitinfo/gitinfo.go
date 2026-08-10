@@ -98,7 +98,7 @@ func Get(path string) Info {
 	}
 
 	// Last commit
-	lastCommit, err := runGit(path, "log", "-1", "--format=%h %s (%cr)")
+	lastCommit, err := runGit(path, "log", "-1", "--date=short", "--format=%h (%cd, %cr) %s")
 	if err != nil || lastCommit == "" {
 		info.LastCommit = "no commits yet"
 	} else {

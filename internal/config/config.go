@@ -9,7 +9,8 @@ import (
 
 // Config holds pw configuration.
 type Config struct {
-	Root string `json:"root"`
+	Root   string `json:"root"`
+	Editor string `json:"editor"`
 }
 
 // loadFromDir reads config.json from the given directory.
