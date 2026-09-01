@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-01
+
 ### Added
 
+- Right pane **Files view**: press `Tab` to toggle between the Git view and a
+  navigable file explorer for the selected project. Shows each entry's size,
+  modified date, and git status (colored: yellow modified, cyan untracked,
+  green added/staged, red deleted, magenta conflict). Navigate into
+  subdirectories with `Enter`/`Right`, back up with `Left` (bounded to the
+  selected project's root), and scroll long directory listings with the
+  existing `Ctrl+D`/`Ctrl+B`/PgUp/PgDn bindings. The cursor is preserved on
+  the folder you came from when navigating back up.
 - Auto-descend to the active subfolder on startup: launching `pw` from a
   directory under the configured root now opens the switcher with the nav
   stack descended to, and the cursor on, the matching project.

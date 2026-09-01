@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -53,6 +54,12 @@ func newStyles(r *lipgloss.Renderer) styles {
 		renderer:    r,
 	}
 }
+
+// right-pane view modes
+const (
+	modeGit   = 0
+	modeFiles = 1
+)
 
 // navFrame stores the state of a navigation level for the drill-down stack.
 type navFrame struct {
@@ -105,6 +112,13 @@ type Model struct {
 	version      string
 	pulling      bool
 	pullStatus   string
+	// right-pane file explorer state
+	rightPaneMode int            // modeGit or modeFiles
+	filesDir      string         // current dir being browsed in files view
+	filesRoot     string         // selected project's dir; files view may not navigate above this
+	fileEntries   []preview.FileEntry
+	fileCursor    int
+	fileNavStack  []string // dir history for going back in files view
 }
 
 // New creates a new Model bound to the given tty renderer. If cwd is a
@@ -192,37 +206,12 @@ func (m Model) Init() tea.Cmd {
 // sortedProjects returns projects sorted by filter text or recency.
 func (m Model) sortedProjects(filter string) []project.Project {
 	if filter == "" {
-		// Sort by recency descending, then alphabetical
+		// Sort alphabetically by name
 		projects := make([]project.Project, len(m.all))
 		copy(projects, m.all)
-		type entry struct {
-			p  project.Project
-			ts int64
-		}
-		entries := make([]entry, len(projects))
-		for i, p := range projects {
-			entries[i] = entry{p: p, ts: m.recent[p.Path]}
-		}
-		// Insertion sort: recent first (ts desc), tie-break name asc
-		for i := 1; i < len(entries); i++ {
-			for j := i; j > 0; j-- {
-				a, b := entries[j-1], entries[j]
-				swap := false
-				if a.ts < b.ts {
-					swap = true
-				} else if a.ts == b.ts && strings.ToLower(a.p.Name) > strings.ToLower(b.p.Name) {
-					swap = true
-				}
-				if swap {
-					entries[j-1], entries[j] = entries[j], entries[j-1]
-				} else {
-					break
-				}
-			}
-		}
-		for i, e := range entries {
-			projects[i] = e.p
-		}
+		sort.Slice(projects, func(i, j int) bool {
+			return strings.ToLower(projects[i].Name) < strings.ToLower(projects[j].Name)
+		})
 		return projects
 	}
 
@@ -338,6 +327,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyRight:
+			if m.rightPaneMode == modeFiles {
+				// descend into directory
+				if len(m.fileEntries) > 0 && m.fileCursor < len(m.fileEntries) {
+					fe := m.fileEntries[m.fileCursor]
+					if fe.IsDir {
+						m.fileNavStack = append(m.fileNavStack, m.filesDir)
+						m.filesDir = filepath.Join(m.filesDir, fe.Name)
+						m = m.reloadFileEntries()
+						m.fileCursor = 0
+						m.previewVP.SetContent(m.renderPreviewContent())
+						m.scrollFilesCursorIntoView()
+					}
+				}
+				return m, nil
+			}
 			if len(m.filtered) > 0 {
 				p := m.filtered[m.cursor]
 				if !p.IsGit {
@@ -362,6 +366,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyLeft:
+			if m.rightPaneMode == modeFiles {
+				// go up in file explorer, but never above the selected project's root
+				if m.filesDir == m.filesRoot {
+					return m, nil
+				}
+				childName := filepath.Base(m.filesDir)
+				if len(m.fileNavStack) > 0 {
+					m.filesDir = m.fileNavStack[len(m.fileNavStack)-1]
+					m.fileNavStack = m.fileNavStack[:len(m.fileNavStack)-1]
+				} else {
+					m.filesDir = filepath.Dir(m.filesDir)
+				}
+				m = m.reloadFileEntries()
+				m.fileCursor = 0
+				for i, fe := range m.fileEntries {
+					if fe.Name == childName {
+						m.fileCursor = i
+						break
+					}
+				}
+				m.previewVP.SetContent(m.renderPreviewContent())
+				m.scrollFilesCursorIntoView()
+				return m, nil
+			}
 			if len(m.stack) > 0 {
 				m = m.ascend()
 				m.previewVP.SetContent(m.renderPreviewContent())
@@ -370,6 +398,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyEnter:
+			if m.rightPaneMode == modeFiles {
+				// enter directory
+				if len(m.fileEntries) > 0 && m.fileCursor < len(m.fileEntries) {
+					fe := m.fileEntries[m.fileCursor]
+					if fe.IsDir {
+						m.fileNavStack = append(m.fileNavStack, m.filesDir)
+						m.filesDir = filepath.Join(m.filesDir, fe.Name)
+						m = m.reloadFileEntries()
+						m.fileCursor = 0
+						m.previewVP.SetContent(m.renderPreviewContent())
+						m.scrollFilesCursorIntoView()
+					}
+				}
+				return m, nil
+			}
 			if len(m.filtered) > 0 {
 				m.confirmed = true
 				m.selectedPath = m.filtered[m.cursor].Path
@@ -393,6 +436,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyUp, tea.KeyCtrlP:
+			if m.rightPaneMode == modeFiles {
+				if m.fileCursor > 0 {
+					m.fileCursor--
+					m.previewVP.SetContent(m.renderPreviewContent())
+					m.scrollFilesCursorIntoView()
+				}
+				return m, nil
+			}
 			if m.cursor > 0 {
 				m.cursor--
 				m.previewVP.SetContent(m.renderPreviewContent())
@@ -401,6 +452,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case tea.KeyDown, tea.KeyCtrlN:
+			if m.rightPaneMode == modeFiles {
+				if m.fileCursor < len(m.fileEntries)-1 {
+					m.fileCursor++
+					m.previewVP.SetContent(m.renderPreviewContent())
+					m.scrollFilesCursorIntoView()
+				}
+				return m, nil
+			}
 			if m.cursor < len(m.filtered)-1 {
 				m.cursor++
 				m.previewVP.SetContent(m.renderPreviewContent())
@@ -433,6 +492,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyCtrlB, tea.KeyPgUp:
 			m.previewVP.HalfViewUp()
+			return m, nil
+
+		case tea.KeyTab:
+			if m.rightPaneMode == modeGit {
+				m.rightPaneMode = modeFiles
+				m = m.initFilesView()
+			} else {
+				m.rightPaneMode = modeGit
+			}
+			m.previewVP.SetContent(m.renderPreviewContent())
+			if m.rightPaneMode == modeFiles {
+				m.scrollFilesCursorIntoView()
+			}
 			return m, nil
 
 		default:
@@ -615,17 +687,170 @@ func (m Model) renderListPane(width int) string {
 	return sb.String()
 }
 
+// initFilesView sets up filesDir from current project and loads entries.
+func (m Model) initFilesView() Model {
+	if len(m.filtered) == 0 {
+		return m
+	}
+	p := m.filtered[m.cursor]
+	if m.filesDir == "" || m.filesRoot != p.Path {
+		m.filesDir = p.Path
+		m.filesRoot = p.Path
+		m.fileNavStack = nil
+		m.fileCursor = 0
+	}
+	return m.reloadFileEntries()
+}
+
+// reloadFileEntries loads FileEntry list for current filesDir, resolving
+// git status dynamically via the enclosing repo root (works even when the
+// selected project itself is a subfolder of a larger repo, e.g. monorepo
+// packages where .git lives in a parent directory).
+func (m Model) reloadFileEntries() Model {
+	repoRoot, gitStatuses := gitinfo.StatusFor(m.filesDir)
+	entries, err := preview.ListDirEntries(m.filesDir, gitStatuses, repoRoot)
+	if err != nil {
+		m.fileEntries = nil
+	} else {
+		m.fileEntries = entries
+	}
+	if m.fileCursor >= len(m.fileEntries) {
+		m.fileCursor = 0
+	}
+	return m
+}
+
+// humanizeSize returns a human-readable file size string.
+func humanizeSize(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%dB", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1fK", float64(n)/1024)
+	default:
+		return fmt.Sprintf("%.1fM", float64(n)/(1024*1024))
+	}
+}
+
+// gitStatusStyle returns a color-coded style for a git porcelain XY status
+// code so dirty files stand out in the file explorer: modified = yellow,
+// untracked = cyan, added/staged = green, deleted = red, conflict = magenta.
+func (m Model) gitStatusStyle(code string) lipgloss.Style {
+	trimmed := strings.TrimSpace(code)
+	r := m.styles.renderer
+	switch {
+	case trimmed == "??":
+		return r.NewStyle().Bold(true).Foreground(lipgloss.Color("14")) // cyan: untracked
+	case trimmed == "D" || strings.Contains(code, "D"):
+		return r.NewStyle().Bold(true).Foreground(lipgloss.Color("9")) // red: deleted
+	case trimmed == "U" || strings.Contains(code, "U"):
+		return r.NewStyle().Bold(true).Foreground(lipgloss.Color("13")) // magenta: conflict
+	case trimmed == "A" || strings.HasPrefix(code, "A"):
+		return r.NewStyle().Bold(true).Foreground(lipgloss.Color("10")) // green: added/staged
+	default:
+		return r.NewStyle().Bold(true).Foreground(lipgloss.Color("11")) // yellow: modified/other
+	}
+}
+
+// filesHeaderLines is the number of lines rendered before the file entry
+// rows in renderFilesContent (mode tabs, blank, dir path, blank).
+const filesHeaderLines = 4
+
+// scrollFilesCursorIntoView adjusts previewVP's Y offset so the row at
+// fileCursor is visible, in case it's above or below the current viewport.
+func (m *Model) scrollFilesCursorIntoView() {
+	target := filesHeaderLines + m.fileCursor
+	if target < m.previewVP.YOffset {
+		m.previewVP.SetYOffset(target)
+	} else if target > m.previewVP.YOffset+m.previewVP.Height-1 {
+		m.previewVP.SetYOffset(target - m.previewVP.Height + 1)
+	}
+}
+
+// renderModeHeader renders the tab bar for the right pane.
+func (m Model) renderModeHeader() string {
+	activeStyle := m.styles.renderer.NewStyle().Bold(true).Reverse(true).Padding(0, 1)
+	inactiveStyle := m.styles.renderer.NewStyle().Padding(0, 1)
+	var gitTab, filesTab string
+	if m.rightPaneMode == modeGit {
+		gitTab = activeStyle.Render("Git")
+		filesTab = inactiveStyle.Render("Files")
+	} else {
+		gitTab = inactiveStyle.Render("Git")
+		filesTab = activeStyle.Render("Files")
+	}
+	return gitTab + " " + filesTab + m.styles.sep.Render("  (tab to switch)")
+}
+
+// renderFilesContent builds the file explorer right pane content.
+func (m Model) renderFilesContent() string {
+	var sb strings.Builder
+
+	sb.WriteString(m.renderModeHeader())
+	sb.WriteString("\n\n")
+
+	if len(m.filtered) == 0 {
+		sb.WriteString("(no project selected)")
+		return sb.String()
+	}
+
+	sb.WriteString(m.styles.sep.Render(m.filesDir))
+	sb.WriteString("\n\n")
+
+	if len(m.fileEntries) == 0 {
+		sb.WriteString(m.styles.sep.Render("(empty directory)"))
+		return sb.String()
+	}
+
+	cursorStyle := m.styles.cursor
+	for i, fe := range m.fileEntries {
+		name := fe.Name
+		if fe.IsDir {
+			name += "/"
+		}
+		sizeStr := humanizeSize(fe.Size)
+		if fe.IsDir {
+			sizeStr = "     "
+		}
+		modStr := fe.ModTime.Format("2006-01-02 15:04")
+		gitStr := fe.GitStatus
+		if gitStr == "" {
+			gitStr = "  "
+		}
+
+		row := fmt.Sprintf(" %-30s %6s  %s  %s", truncate(name, 30), sizeStr, modStr, gitStr)
+		switch {
+		case i == m.fileCursor:
+			sb.WriteString(cursorStyle.Render(row))
+		case fe.GitStatus != "":
+			sb.WriteString(m.gitStatusStyle(fe.GitStatus).Render(row))
+		default:
+			sb.WriteString(row)
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
 func (m Model) renderPreviewContent() string {
+	if m.rightPaneMode == modeFiles {
+		return m.renderFilesContent()
+	}
 	if len(m.filtered) == 0 {
 		return "(no projects)"
 	}
 	p := m.filtered[m.cursor]
 	pv, ok := m.previewCache[p.Path]
 	if !ok {
-		return "loading…"
+		return m.renderModeHeader() + "\n\nloading…"
 	}
 
 	var sb strings.Builder
+
+	// Mode tab header
+	sb.WriteString(m.renderModeHeader())
+	sb.WriteString("\n\n")
 
 	// Project name header
 	sb.WriteString(m.styles.previewHead.Render("◆ " + p.Name))
@@ -705,7 +930,7 @@ func (m Model) View() string {
 	previewContent := m.previewVP.View()
 
 	// Help bar
-	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^r pull · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
+	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^r pull · tab git/files · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
 	if m.pulling {
 		helpText = "pulling…"
 	} else if m.pullStatus != "" {

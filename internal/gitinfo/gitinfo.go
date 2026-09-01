@@ -20,7 +20,8 @@ type Info struct {
 	Ahead      int
 	Behind     int
 	LastCommit string
-	LastSync   time.Time // last fetch/pull time (from .git/FETCH_HEAD mtime), zero if unknown
+	LastSync   time.Time            // last fetch/pull time (from .git/FETCH_HEAD mtime), zero if unknown
+	DirtyFiles map[string]string    // relative path -> XY status code (e.g. "M", "A", "??", "D")
 	Available  bool
 	Err        error
 }
@@ -44,7 +45,10 @@ func runGit(path string, args ...string) (string, error) {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	err := cmd.Run()
-	return strings.TrimSpace(out.String()), err
+	// Trim only trailing whitespace/newlines. A leading space is significant
+	// for commands like `git status --porcelain`, where the XY status code
+	// can start with a literal space (e.g. " M file.txt").
+	return strings.TrimRight(out.String(), " \t\r\n"), err
 }
 
 // fetchQuiet runs a best-effort `git fetch` to refresh remote-tracking refs
@@ -55,6 +59,26 @@ func fetchQuiet(path string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, gitBin, "-C", path, "fetch", "--quiet")
 	_ = cmd.Run()
+}
+
+// StatusFor returns the git repo root and per-file dirty status for dir.
+// Unlike Get, it does not require dir itself to contain a .git entry —
+// it resolves the enclosing repo root via `git rev-parse --show-toplevel`,
+// so it works for subfolders of a repo (e.g. monorepo packages) too.
+// Returns ("", nil) if dir is not inside a git working tree.
+func StatusFor(dir string) (repoRoot string, dirtyFiles map[string]string) {
+	if gitBin == "" {
+		return "", nil
+	}
+	root, err := runGit(dir, "rev-parse", "--show-toplevel")
+	if err != nil || root == "" {
+		return "", nil
+	}
+	status, err := runGit(dir, "status", "--porcelain")
+	if err != nil {
+		return root, nil
+	}
+	return root, parsePorcelain(status)
 }
 
 // Get returns git information for the project at path.
@@ -77,6 +101,7 @@ func Get(path string) Info {
 	status, err := runGit(path, "status", "--porcelain")
 	if err == nil {
 		info.Dirty = strings.TrimSpace(status) != ""
+		info.DirtyFiles = parsePorcelain(status)
 	}
 
 	// Ahead/Behind. To get an accurate count we first do a quiet, best-effort
@@ -111,6 +136,40 @@ func Get(path string) Info {
 	info.LastSync = lastSyncTime(path)
 
 	return info
+}
+
+// parsePorcelain parses `git status --porcelain` output into a map of
+// relative path -> status code (e.g. "M", "A", "??", "D").
+// Handles quoted paths and rename "old -> new" format.
+func parsePorcelain(output string) map[string]string {
+	result := make(map[string]string)
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		xy := strings.TrimRight(line[:2], " ")
+		rest := line[3:]
+
+		// Handle quoted paths (e.g. "M  \"path with spaces\"")
+		if strings.HasPrefix(rest, "\"") {
+			rest = strings.Trim(rest, "\"")
+		}
+
+		// Handle rename "old -> new" (R  old -> new or "old" -> "new")
+		// Take the destination (after " -> ")
+		if idx := strings.Index(rest, " -> "); idx != -1 {
+			rest = rest[idx+4:]
+			if strings.HasPrefix(rest, "\"") {
+				rest = strings.Trim(rest, "\"")
+			}
+		}
+
+		path := strings.TrimSpace(rest)
+		if path != "" {
+			result[path] = xy
+		}
+	}
+	return result
 }
 
 // lastSyncTime returns the last fetch/pull time for the repo at path,

@@ -109,6 +109,22 @@ via the `editor` field in `config.json`:
 | `Ctrl+U` | Clear filter |
 | `Ctrl+D` / `Ctrl+F` / `PgDn` | Scroll preview down |
 | `Ctrl+B` / `PgUp` | Scroll preview up |
+| `Tab` | Toggle right pane between Git view and Files view |
+
+## Files view
+
+Press `Tab` to switch the right pane from the Git view to a navigable file
+explorer for the highlighted project. Each entry shows size, modified date,
+and git status (colored: yellow modified, cyan untracked, green
+added/staged, red deleted, magenta conflict).
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Move cursor |
+| `Enter` / `→` (Right) | Descend into highlighted directory |
+| `←` (Left) | Go back up a directory (bounded to the project's root) |
+| `Ctrl+D` / `Ctrl+F` / `PgDn` | Scroll down |
+| `Ctrl+B` / `PgUp` | Scroll up |
 
 ## Notes
 
