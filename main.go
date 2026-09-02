@@ -127,7 +127,7 @@ func main() {
 	store, err := state.Load()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "warning: could not load state:", err)
-		store = &state.Store{Recent: map[string]int64{}}
+		store = &state.Store{Recent: map[string]int64{}, Favorites: map[string]bool{}}
 	}
 
 	// Scan projects
@@ -155,7 +155,7 @@ func main() {
 	}
 
 	renderer := lipgloss.NewRenderer(ttyOut)
-	model := ui.New(root, projects, store.Recent, renderer, version.Version, cwd, editor)
+	model := ui.New(root, projects, store, renderer, version.Version, cwd, editor)
 
 	p := tea.NewProgram(
 		model,

@@ -18,6 +18,7 @@ import (
 	"pw/internal/gitinfo"
 	"pw/internal/preview"
 	"pw/internal/project"
+	"pw/internal/state"
 	"pw/internal/term"
 )
 
@@ -30,6 +31,7 @@ type styles struct {
 	normal      lipgloss.Style
 	cursor      lipgloss.Style
 	recentTag   lipgloss.Style
+	favoriteTag lipgloss.Style
 	help        lipgloss.Style
 	previewHead lipgloss.Style
 	sep         lipgloss.Style
@@ -49,6 +51,7 @@ func newStyles(r *lipgloss.Renderer) styles {
 		normal:      r.NewStyle(),
 		cursor:      r.NewStyle().Reverse(true).Bold(true),
 		recentTag:   r.NewStyle().Foreground(lipgloss.Color("8")),
+		favoriteTag: r.NewStyle().Bold(true).Foreground(lipgloss.Color("11")),
 		help:        r.NewStyle().Foreground(lipgloss.Color("8")),
 		previewHead: r.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
 		sep:         r.NewStyle().Foreground(lipgloss.Color("8")),
@@ -109,31 +112,33 @@ func (ps projectSource) Len() int            { return len(ps.projects) }
 
 // Model is the bubbletea model.
 type Model struct {
-	root         string
-	currentDir   string
-	stack        []navFrame
-	all          []project.Project
-	recent       map[string]int64
-	filterInput  textinput.Model
-	cursor       int
-	filtered     []project.Project
-	previewVP    viewport.Model
-	previewCache map[string]preview.Preview
-	selectedPath string
-	confirmed    bool
-	action       string
-	editor       string
-	width        int
-	height       int
-	styles       styles
-	version      string
-	pulling      bool
-	pullStatus   string
-	termStatus   string
+	root          string
+	currentDir    string
+	stack         []navFrame
+	all           []project.Project
+	recent        map[string]int64
+	store         *state.Store
+	favoritesOnly bool
+	filterInput   textinput.Model
+	cursor        int
+	filtered      []project.Project
+	previewVP     viewport.Model
+	previewCache  map[string]preview.Preview
+	selectedPath  string
+	confirmed     bool
+	action        string
+	editor        string
+	width         int
+	height        int
+	styles        styles
+	version       string
+	pulling       bool
+	pullStatus    string
+	termStatus    string
 	// right-pane file explorer state
-	rightPaneMode int            // modeGit or modeFiles
-	filesDir      string         // current dir being browsed in files view
-	filesRoot     string         // selected project's dir; files view may not navigate above this
+	rightPaneMode int    // modeGit or modeFiles
+	filesDir      string // current dir being browsed in files view
+	filesRoot     string // selected project's dir; files view may not navigate above this
 	fileEntries   []preview.FileEntry
 	fileCursor    int
 	fileNavStack  []string // dir history for going back in files view
@@ -144,7 +149,7 @@ type Model struct {
 // directory under root, the switcher opens with the nav stack descended
 // down to and the cursor on the active subfolder matching cwd. editor is
 // the configured file editor command used by the "open in editor" shortcut.
-func New(root string, projects []project.Project, recent map[string]int64, renderer *lipgloss.Renderer, version string, cwd string, editor string) Model {
+func New(root string, projects []project.Project, store *state.Store, renderer *lipgloss.Renderer, version string, cwd string, editor string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "filter projects..."
 	ti.Focus()
@@ -154,7 +159,8 @@ func New(root string, projects []project.Project, recent map[string]int64, rende
 		root:         root,
 		currentDir:   root,
 		all:          projects,
-		recent:       recent,
+		recent:       store.Recent,
+		store:        store,
 		filterInput:  ti,
 		previewCache: make(map[string]preview.Preview),
 		width:        80,
@@ -224,23 +230,93 @@ func (m Model) Init() tea.Cmd {
 
 // sortedProjects returns projects sorted by filter text or recency.
 func (m Model) sortedProjects(filter string) []project.Project {
+	var source []project.Project
+	if m.favoritesOnly {
+		source = m.favoritesSorted()
+	} else {
+		source = m.all
+	}
+
+	var base []project.Project
 	if filter == "" {
 		// Sort alphabetically by name
-		projects := make([]project.Project, len(m.all))
-		copy(projects, m.all)
+		projects := make([]project.Project, len(source))
+		copy(projects, source)
 		sort.Slice(projects, func(i, j int) bool {
 			return strings.ToLower(projects[i].Name) < strings.ToLower(projects[j].Name)
 		})
-		return projects
+		base = projects
+	} else {
+		// Fuzzy match
+		results := fuzzy.FindFrom(filter, projectSource{source})
+		out := make([]project.Project, len(results))
+		for i, r := range results {
+			out[i] = source[r.Index]
+		}
+		base = out
 	}
 
-	// Fuzzy match
-	results := fuzzy.FindFrom(filter, projectSource{m.all})
-	out := make([]project.Project, len(results))
-	for i, r := range results {
-		out[i] = m.all[r.Index]
+	if m.favoritesOnly || m.store == nil {
+		return base
 	}
-	return out
+
+	// Pin favorites to the top, alphabetically among themselves, followed
+	// by the rest in their existing order.
+	var favs, rest []project.Project
+	for _, p := range base {
+		if m.store.IsFavorite(p.Path) {
+			favs = append(favs, p)
+		} else {
+			rest = append(rest, p)
+		}
+	}
+	sort.Slice(favs, func(i, j int) bool {
+		return strings.ToLower(favs[i].Name) < strings.ToLower(favs[j].Name)
+	})
+	return append(favs, rest...)
+}
+
+// fallbackProject constructs a minimal project.Project for a favorited path
+// that isn't present in m.all (e.g. favorited under a different root or a
+// different drill-down subdirectory than the one currently being browsed).
+// IsGit is left false since we have no cheap way to know without a stat;
+// preview.Build and the list/preview rendering both handle IsGit==false
+// (and any missing git data) gracefully already (see "not a git repo" path
+// in renderPreviewContent).
+func fallbackProject(path string) project.Project {
+	return project.Project{
+		Name: filepath.Base(path),
+		Path: path,
+	}
+}
+
+// favoritesSorted returns all favorited projects (sourced from the store,
+// independent of the current navigation level/root), sorted alphabetically
+// — the same order used to pin favorites to the top of the list, and used
+// for the 1-9 highlight shortcut (favorites-only view, empty filter) and
+// the favorites-only view itself.
+func (m Model) favoritesSorted() []project.Project {
+	if m.store == nil {
+		return nil
+	}
+	// Build a lookup of currently-scanned projects so we reuse full data
+	// (e.g. IsGit) when the favorite happens to be at the current level.
+	byPath := make(map[string]project.Project, len(m.all))
+	for _, p := range m.all {
+		byPath[p.Path] = p
+	}
+	favs := make([]project.Project, 0, len(m.store.Favorites))
+	for path := range m.store.Favorites {
+		if p, ok := byPath[path]; ok {
+			favs = append(favs, p)
+		} else {
+			favs = append(favs, fallbackProject(path))
+		}
+	}
+	sort.Slice(favs, func(i, j int) bool {
+		return strings.ToLower(favs[i].Name) < strings.ToLower(favs[j].Name)
+	})
+	return favs
 }
 
 // ascend pops the nav stack and restores the parent level.
@@ -393,6 +469,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = true
 			return m, nil
 		}
+		if s := msg.String(); m.favoritesOnly && m.filterInput.Value() == "" && len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
+			n := int(s[0] - '0')
+			favs := m.favoritesSorted()
+			if n <= len(favs) {
+				target := favs[n-1]
+				for i, fp := range m.filtered {
+					if fp.Path == target.Path {
+						m.cursor = i
+						m.previewVP.SetContent(m.renderPreviewContent())
+						return m, m.loadPreviewCmd()
+					}
+				}
+			}
+			return m, nil
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			m.confirmed = false
@@ -516,6 +607,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case tea.KeyCtrlF:
+			if len(m.filtered) > 0 && m.store != nil {
+				p := m.filtered[m.cursor]
+				path := p.Path
+				m.store.ToggleFavorite(path)
+				_ = m.store.Save()
+				newFilter := m.filterInput.Value()
+				m.filtered = m.sortedProjects(newFilter)
+				// keep cursor on the same project if still present
+				for i, fp := range m.filtered {
+					if fp.Path == path {
+						m.cursor = i
+						break
+					}
+				}
+				if m.cursor >= len(m.filtered) {
+					m.cursor = len(m.filtered) - 1
+				}
+				if m.cursor < 0 {
+					m.cursor = 0
+				}
+				m.previewVP.SetContent(m.renderPreviewContent())
+			}
+			return m, nil
+
+		case tea.KeyCtrlG:
+			m.favoritesOnly = !m.favoritesOnly
+			newFilter := m.filterInput.Value()
+			m.filtered = m.sortedProjects(newFilter)
+			m.cursor = 0
+			m.previewVP.SetContent(m.renderPreviewContent())
+			return m, m.loadPreviewCmd()
+
 		case tea.KeyUp, tea.KeyCtrlP:
 			if m.rightPaneMode == modeFiles {
 				if m.fileCursor > 0 {
@@ -585,7 +709,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewVP.SetContent(m.renderPreviewContent())
 			return m, m.loadPreviewCmd()
 
-		case tea.KeyCtrlD, tea.KeyCtrlF, tea.KeyPgDown:
+		case tea.KeyCtrlD, tea.KeyPgDown:
 			m.previewVP.HalfViewDown()
 			return m, nil
 
@@ -698,6 +822,9 @@ func (m Model) renderListPane(width int) string {
 	var sb strings.Builder
 
 	header := truncate("  "+m.breadcrumb(), width)
+	if m.favoritesOnly {
+		header = truncate("  "+m.breadcrumb()+" [favorites]", width)
+	}
 	sb.WriteString(m.styles.header.Render(header))
 	sb.WriteString("\n")
 
@@ -730,20 +857,51 @@ func (m Model) renderListPane(width int) string {
 		}
 	}
 
+	// Map favorite path -> quick-highlight digit (1-9), matching the same
+	// favoritesSorted() order used by the Update handler's digit-highlight
+	// shortcut, so the number shown here is exactly what the user can press.
+	favNum := map[string]int{}
+	for i, p := range m.favoritesSorted() {
+		if i >= 9 {
+			break
+		}
+		favNum[p.Path] = i + 1
+	}
+
 	for i := start; i < end; i++ {
 		p := m.filtered[i]
 		ts := m.recent[p.Path]
 		tag := humanizeAge(ts)
+		isFav := m.store != nil && m.store.IsFavorite(p.Path)
+
+		// favMarker is the compact favorite indicator prefixed to the name:
+		// "★ " normally, or "N★ " when this favorite has a quick-highlight
+		// digit (1-9) assigned, so the row shows the same number the "1-9"
+		// shortcut expects.
+		favMarker := ""
+		if isFav {
+			if n, ok := favNum[p.Path]; ok {
+				favMarker = fmt.Sprintf("%d★ ", n)
+			} else {
+				favMarker = "★ "
+			}
+		}
 
 		nameMaxW := width - 4
 		if tag != "" {
 			nameMaxW -= len(tag) + 2
+		}
+		if isFav {
+			nameMaxW -= len([]rune(favMarker))
 		}
 		if nameMaxW < 4 {
 			nameMaxW = 4
 		}
 
 		name := truncate(p.Name, nameMaxW)
+		if isFav {
+			name = favMarker + name
+		}
 
 		if i == m.cursor {
 			// Cursor row: build plain row (no nested Render calls) so the single
@@ -766,14 +924,26 @@ func (m Model) renderListPane(width int) string {
 			if padding < 1 {
 				padding = 1
 			}
-			row := " " + name + strings.Repeat(" ", padding) + m.styles.recentTag.Render(tag) + " "
+			var namePart string
+			if isFav {
+				namePart = m.styles.favoriteTag.Render(favMarker) + strings.TrimPrefix(name, favMarker)
+			} else {
+				namePart = name
+			}
+			row := " " + namePart + strings.Repeat(" ", padding) + m.styles.recentTag.Render(tag) + " "
 			if p.IsGit {
 				sb.WriteString(m.styles.gitRepo.Render(row))
 			} else {
 				sb.WriteString(m.styles.normal.Render(row))
 			}
 		} else {
-			row := " " + name + " "
+			var namePart string
+			if isFav {
+				namePart = m.styles.favoriteTag.Render(favMarker) + strings.TrimPrefix(name, favMarker)
+			} else {
+				namePart = name
+			}
+			row := " " + namePart + " "
 			if p.IsGit {
 				sb.WriteString(m.styles.gitRepo.Render(row))
 			} else {
@@ -1029,7 +1199,7 @@ func (m Model) View() string {
 	previewContent := m.previewVP.View()
 
 	// Help bar
-	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^t new tab · ^x explorer · ^r pull · tab git/files · ? help · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
+	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^t new tab · ^x explorer · ^r pull · ^f favorite · ^g favorites view · 1-9 highlight favorite (empty filter) · tab git/files · ? help · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
 	if m.pulling {
 		helpText = "pulling…"
 	} else if m.pullStatus != "" {
@@ -1095,9 +1265,14 @@ func (m Model) renderHelpOverlay(background string) string {
 			row("Ctrl+T", "Open a new Windows Terminal tab at this path (same shell)"),
 			row("Ctrl+X", "Open this path in Windows Explorer (Windows/WSL only)"),
 		}},
+		{"Favorites", []kb{
+			row("Ctrl+F", "Toggle favorite on highlighted project"),
+			row("Ctrl+G", "Toggle favorites-only view"),
+			row("1 .. 9", "In favorites-only view with an empty filter: move cursor to the Nth favorite (then Enter/Ctrl+O/etc. to act on it)"),
+		}},
 		{"Right pane", []kb{
 			row("Tab", "Toggle between Git view and Files view"),
-			row("Ctrl+D / Ctrl+F / PgDn", "Scroll preview down"),
+			row("Ctrl+D / PgDn", "Scroll preview down"),
 			row("Ctrl+B / PgUp", "Scroll preview up"),
 			row("Ctrl+R", "git pull the highlighted repo"),
 		}},

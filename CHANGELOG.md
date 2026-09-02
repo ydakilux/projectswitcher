@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Stopped tracking the built `pw.exe` binary in git (matches existing
+  `pw` ignore rule); build it locally via `make build-windows` instead.
+
+## [0.6.0] - 2026-09-02
+
+### Added
+
+- Favorites: `Ctrl+F` toggles the highlighted project as a favorite.
+  Favorited projects are pinned to the top of the list (alphabetically
+  sorted among themselves) and marked with a `★` glyph; favorite state
+  persists in the same state file as recent projects.
+- `Ctrl+G` toggles a favorites-only view, restricting the list to favorited
+  projects (fuzzy filter still applies on top). The header shows
+  `[favorites]` while active.
+- `1`..`9` quick-highlight: while in favorites-only view (`Ctrl+G`) with an
+  empty filter, pressing a bare digit key moves the cursor to (highlights)
+  the Nth favorite (alphabetical order) without selecting/exiting — press
+  `Enter`, `Ctrl+O`, `Ctrl+E`, etc. afterward to act on it. Digits still
+  type into the filter as usual outside of that specific mode/state.
+  This lands on a bare-digit scheme after two earlier attempts proved
+  non-portable: `Ctrl+1`-`Ctrl+9` don't transmit distinct control codes for
+  Ctrl+digit in most terminals, and `Alt+1`-`Alt+9` (ESC-prefixed) behaved
+  inconsistently across terminals/WSL configurations.
+- Favorited rows show their `1`-`9` quick-highlight digit right before the
+  `★` glyph (e.g. `3★ myproject`) for the first 9 favorites, matching the
+  number expected by the shortcut above.
+
+### Changed
+
+- `Ctrl+F` no longer scrolls the preview pane down (conflicted with the new
+  favorite-toggle shortcut); use `Ctrl+D` or `PgDn` instead.
+
 ## [0.5.1] - 2026-09-02
 
 ### Fixed

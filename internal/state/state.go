@@ -10,7 +10,8 @@ import (
 
 // Store holds recent project usage data.
 type Store struct {
-	Recent map[string]int64 `json:"recent"` // absolute path -> unix seconds last used
+	Recent    map[string]int64 `json:"recent"`    // absolute path -> unix seconds last used
+	Favorites map[string]bool  `json:"favorites"` // absolute path -> true
 }
 
 // statePath returns the path to the state file.
@@ -54,16 +55,19 @@ func Load() (*Store, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &Store{Recent: map[string]int64{}}, nil
+			return &Store{Recent: map[string]int64{}, Favorites: map[string]bool{}}, nil
 		}
 		return nil, err
 	}
 	var s Store
 	if err := json.Unmarshal(data, &s); err != nil {
-		return &Store{Recent: map[string]int64{}}, nil
+		return &Store{Recent: map[string]int64{}, Favorites: map[string]bool{}}, nil
 	}
 	if s.Recent == nil {
 		s.Recent = map[string]int64{}
+	}
+	if s.Favorites == nil {
+		s.Favorites = map[string]bool{}
 	}
 	return &s, nil
 }
@@ -71,6 +75,24 @@ func Load() (*Store, error) {
 // Touch sets the last-used time for the given path.
 func (s *Store) Touch(path string) {
 	s.Recent[path] = time.Now().Unix()
+}
+
+// ToggleFavorite toggles favorite status for path and returns the new state.
+func (s *Store) ToggleFavorite(path string) bool {
+	if s.Favorites == nil {
+		s.Favorites = map[string]bool{}
+	}
+	if s.Favorites[path] {
+		delete(s.Favorites, path)
+		return false
+	}
+	s.Favorites[path] = true
+	return true
+}
+
+// IsFavorite reports whether path is favorited.
+func (s *Store) IsFavorite(path string) bool {
+	return s.Favorites[path]
 }
 
 // Save writes the state to disk atomically.

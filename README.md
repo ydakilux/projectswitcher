@@ -80,8 +80,9 @@ echo '{"root": "~/projects"}' > ~/go/bin/config.json
 | `Ctrl+E` | Open project in configured editor (new window) - pw stays open, no `cd` |
 | `Ctrl+T` | New Windows Terminal tab at this path (see below) - pw stays open |
 | `Ctrl+X` | Windows Explorer at this path (see below) - pw stays open |
-
-### Editor configuration
+| `Ctrl+F` | Toggle favorite on highlighted project |
+| `Ctrl+G` | Toggle favorites-only view |
+| `1`..`9` | In favorites-only view with an empty filter: move cursor to Nth favorite (then act on it) |
 
 `Ctrl+E` opens the selected project in a configurable editor command. Set it
 via the `editor` field in `config.json`:
@@ -132,13 +133,36 @@ Requires `explorer.exe` on `PATH`. Not supported outside Windows/WSL.
 | `Ctrl+E` | Open project in configured editor (new window, pw stays open) |
 | `Ctrl+T` | Open a new Windows Terminal tab at this path |
 | `Ctrl+X` | Open this path in Windows Explorer |
+| `Ctrl+F` | Toggle favorite on highlighted project |
+| `Ctrl+G` | Toggle favorites-only view |
+| `1`..`9` | In favorites-only view with an empty filter: move cursor to Nth favorite (then act on it) |
 | `Esc` | Go back one level, or cancel at root |
 | `Ctrl+C` | Cancel immediately (any depth) |
 | `Ctrl+U` | Clear filter |
-| `Ctrl+D` / `Ctrl+F` / `PgDn` | Scroll preview down |
+| `Ctrl+D` / `PgDn` | Scroll preview down |
 | `Ctrl+B` / `PgUp` | Scroll preview up |
 | `Tab` | Toggle right pane between Git view and Files view |
 | `?` | Toggle full keybindings help popup |
+
+## Favorites
+
+Press `Ctrl+F` to toggle the highlighted project as a favorite. Favorited
+projects are pinned to the top of the list, sorted alphabetically, and
+marked with a `★` glyph (recent-use timestamps still show alongside, if
+applicable). The first 9 favorites (in that same alphabetical order) also
+show their quick-highlight digit right before the star, e.g. `3★ myproject` —
+that's the exact number to press for the `1`-`9` shortcut below.
+Favorites persist in the same state file as recent projects
+(`recent.json`).
+
+Press `Ctrl+G` to restrict the list to favorites only (fuzzy filtering still
+applies on top); the header shows `[favorites]` while active. While in
+favorites-only view **with the filter empty**, pressing a bare digit `1`-`9`
+moves the cursor to (highlights) the Nth favorite (alphabetical order) —
+it does not select/exit by itself, so you can then press `Enter` to `cd`
+into it, `Ctrl+O`/`Ctrl+E` to launch opencode/editor, `Ctrl+F` to
+unfavorite it, etc. If the filter has any text typed, or favorites-only
+view is off, digit keys are typed into the filter as usual.
 
 ## Files view
 
@@ -152,7 +176,7 @@ added/staged, red deleted, magenta conflict).
 | `↑` / `↓` | Move cursor |
 | `Enter` / `→` (Right) | Descend into highlighted directory |
 | `←` (Left) | Go back up a directory (bounded to the project's root) |
-| `Ctrl+D` / `Ctrl+F` / `PgDn` | Scroll down |
+| `Ctrl+D` / `PgDn` | Scroll down |
 | `Ctrl+B` / `PgUp` | Scroll up |
 
 ## Notes

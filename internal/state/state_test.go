@@ -63,4 +63,51 @@ func TestLoadMissing(t *testing.T) {
 	if s.Recent == nil {
 		t.Error("Recent map should be initialized")
 	}
+	if s.Favorites == nil {
+		t.Error("Favorites map should be initialized")
+	}
+}
+
+func TestToggleFavoriteRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	statePathOverride = filepath.Join(tmp, "pw", "recent.json")
+	defer func() { statePathOverride = "" }()
+
+	s, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if s.IsFavorite("/home/user/projects/gamma") {
+		t.Error("expected not favorited initially")
+	}
+
+	if fav := s.ToggleFavorite("/home/user/projects/gamma"); !fav {
+		t.Error("expected ToggleFavorite to return true after first toggle")
+	}
+	if !s.IsFavorite("/home/user/projects/gamma") {
+		t.Error("expected favorited after toggle")
+	}
+
+	if err := s.Save(); err != nil {
+		t.Fatalf("Save() error: %v", err)
+	}
+
+	s2, err := Load()
+	if err != nil {
+		t.Fatalf("Load() second time error: %v", err)
+	}
+	if !s2.IsFavorite("/home/user/projects/gamma") {
+		t.Error("expected favorite to persist through save/load")
+	}
+
+	if fav := s2.ToggleFavorite("/home/user/projects/gamma"); fav {
+		t.Error("expected ToggleFavorite to return false after second toggle")
+	}
+	if s2.IsFavorite("/home/user/projects/gamma") {
+		t.Error("expected not favorited after untoggle")
+	}
+	if _, ok := s2.Favorites["/home/user/projects/gamma"]; ok {
+		t.Error("expected favorite key to be deleted, not stored as false")
+	}
 }
