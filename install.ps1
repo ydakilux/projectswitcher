@@ -37,13 +37,16 @@ $SrcExe     = Join-Path $RepoRoot 'pw.exe'
 $SrcPs1     = Join-Path $RepoRoot 'shell\pw-profile.ps1'
 $DstExe     = Join-Path $BinDir   'pw.exe'
 $DstPs1     = Join-Path $BinDir   'pw-profile.ps1'
-$HookLine   = '. "$HOME\go\bin\pw-profile.ps1"'
+$HookLine    = '. "$HOME\go\bin\pw-profile.ps1"'
 $HookComment = '# pw project switcher'
 # Bundled with the hook so a default/Restricted execution policy doesn't
 # block loading the (unsigned) pw-profile.ps1 script. Scoped to Process only
 # - it doesn't persist anywhere and doesn't require writing to any config
 # file, so it can't be blocked the same way profile writes sometimes are.
 $PolicyLine = 'Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force'
+# Regex matching any stale hook line from before the pw.ps1 -> pw-profile.ps1
+# rename, so old profiles get cleaned up instead of erroring on load.
+$StaleHookPattern = '^\s*\.\s+"?\$HOME\\go\\bin\\pw\.ps1"?\s*$'
 
 # ---------------------------------------------------------------------------
 # Step 1 - Build
@@ -119,49 +122,90 @@ if (Test-Path $staleOldPs1) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 5 - Hook pw-profile.ps1 into PowerShell profile
+# Step 5 - Hook pw-profile.ps1 into PowerShell profiles
 # ---------------------------------------------------------------------------
-Write-Step "Checking PowerShell profile ($PROFILE) ..."
+# Ctrl+T can open a new tab in either Windows PowerShell 5.1 or PowerShell 7
+# (best-effort guess), so hook both editions' profiles, not just the one
+# running this installer. Both live under the same Documents folder, in
+# WindowsPowerShell\ and PowerShell\ respectively.
+$profileLeaf       = Split-Path $PROFILE -Leaf
+$documentsDir      = Split-Path (Split-Path $PROFILE -Parent) -Parent
+$candidateProfiles = @(
+    $PROFILE
+    Join-Path $documentsDir "WindowsPowerShell\$profileLeaf"
+    Join-Path $documentsDir "PowerShell\$profileLeaf"
+) | Select-Object -Unique
 
-# Use raw .NET IO instead of Test-Path/New-Item: on some OneDrive-synced
-# profile paths those cmdlets can report a directory/file as present when
-# it isn't yet materialized, causing New-Item to fail with a misleading
-# "could not find file" error. System.IO talks to the filesystem directly
-# and creates missing directories/files as needed.
-$profileWriteFailed = $false
-try {
-    $profileDir = Split-Path $PROFILE -Parent
-    if ($profileDir) {
-        [System.IO.Directory]::CreateDirectory($profileDir) | Out-Null
-    }
+$anyProfileFailed = $false
+foreach ($targetProfile in $candidateProfiles) {
+    Write-Step "Checking PowerShell profile ($targetProfile) ..."
 
-    $profileContent = ''
-    if ([System.IO.File]::Exists($PROFILE)) {
-        $profileContent = [System.IO.File]::ReadAllText($PROFILE)
-    }
+    # Use raw .NET IO instead of Test-Path/New-Item: on some OneDrive-synced
+    # profile paths those cmdlets can report a directory/file as present when
+    # it isn't yet materialized, causing New-Item to fail with a misleading
+    # "could not find file" error. System.IO talks to the filesystem directly
+    # and creates missing directories/files as needed.
+    try {
+        $targetDir = Split-Path $targetProfile -Parent
+        if ($targetDir) {
+            [System.IO.Directory]::CreateDirectory($targetDir) | Out-Null
+        }
 
-    if ($profileContent -like "*$HookLine*") {
-        Write-Skip "pw hook already present in profile"
-    } else {
-        # Prepend the execution-policy bypass so an unsigned pw-profile.ps1
-        # loads under a default/Restricted policy, with no manual step and
-        # no persisted config file (Process scope only).
-        $append = "`n$HookComment`n$PolicyLine`n$HookLine`n"
-        [System.IO.File]::AppendAllText($PROFILE, $append)
-        Write-Ok "Added pw hook to $PROFILE"
+        $profileContent = ''
+        if ([System.IO.File]::Exists($targetProfile)) {
+            # Clear a stray ReadOnly attribute before attempting to write -
+            # otherwise WriteAllText fails with a generic "Access to the
+            # path is denied" error even though the file is readable.
+            $attrs = [System.IO.File]::GetAttributes($targetProfile)
+            if ($attrs -band [System.IO.FileAttributes]::ReadOnly) {
+                [System.IO.File]::SetAttributes($targetProfile, ($attrs -band (-bnot [System.IO.FileAttributes]::ReadOnly)))
+            }
+            $profileContent = [System.IO.File]::ReadAllText($targetProfile)
+        } elseif ($targetProfile -ne $PROFILE) {
+            # Don't create a fresh profile for an edition that isn't
+            # installed/used yet - only clean up/hook editions that already
+            # have a profile file (or are the current host's $PROFILE).
+            continue
+        }
+
+        # Drop any stale hook line from before the pw.ps1 -> pw-profile.ps1
+        # rename so old profiles don't error trying to load a file that no
+        # longer exists.
+        $lines = $profileContent -split "`r?`n"
+        $cleaned = $lines | Where-Object { $_ -notmatch $StaleHookPattern }
+        if ($cleaned.Count -ne $lines.Count) {
+            $profileContent = ($cleaned -join "`n")
+            Write-Ok "Removed stale pw hook from $targetProfile"
+        }
+
+        if ($profileContent -like "*$HookLine*") {
+            Write-Skip "pw hook already present in $targetProfile"
+            if ($cleaned.Count -ne $lines.Count) {
+                [System.IO.File]::WriteAllText($targetProfile, $profileContent)
+            }
+        } else {
+            # Prepend the execution-policy bypass so an unsigned
+            # pw-profile.ps1 loads under a default/Restricted policy, with
+            # no manual step and no persisted config file (Process scope
+            # only).
+            $profileContent += "`n$HookComment`n$PolicyLine`n$HookLine`n"
+            [System.IO.File]::WriteAllText($targetProfile, $profileContent)
+            Write-Ok "Added pw hook to $targetProfile"
+        }
+    } catch {
+        $anyProfileFailed = $true
+        Write-Host "[warn] Could not update PowerShell profile automatically: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "       This can happen on some OneDrive-synced Documents folders (corporate policy or sync quirk)." -ForegroundColor Yellow
+        Write-Host "       pw.exe and pw-profile.ps1 are installed; just add the pw hook manually:" -ForegroundColor Yellow
+        Write-Host "         1. In File Explorer, go to: $targetDir" -ForegroundColor Yellow
+        Write-Host "            (create the folder there if it doesn't exist)" -ForegroundColor Yellow
+        Write-Host "         2. Create/open the file: $profileLeaf" -ForegroundColor Yellow
+        Write-Host "         3. Add these two lines and save:" -ForegroundColor Yellow
+        Write-Host "              $PolicyLine" -ForegroundColor Yellow
+        Write-Host "              $HookLine" -ForegroundColor Yellow
     }
-} catch {
-    $profileWriteFailed = $true
-    Write-Host "[warn] Could not update PowerShell profile automatically: $($_.Exception.Message)" -ForegroundColor Yellow
-    Write-Host "       This can happen on some OneDrive-synced Documents folders (corporate policy or sync quirk)." -ForegroundColor Yellow
-    Write-Host "       pw.exe and pw-profile.ps1 are installed; just add the pw hook manually:" -ForegroundColor Yellow
-    Write-Host "         1. In File Explorer, go to: $profileDir" -ForegroundColor Yellow
-    Write-Host "            (create the 'PowerShell' folder there if it doesn't exist)" -ForegroundColor Yellow
-    Write-Host "         2. Create/open the file: $(Split-Path $PROFILE -Leaf)" -ForegroundColor Yellow
-    Write-Host "         3. Add these two lines and save:" -ForegroundColor Yellow
-    Write-Host "              $PolicyLine" -ForegroundColor Yellow
-    Write-Host "              $HookLine" -ForegroundColor Yellow
 }
+$profileWriteFailed = $anyProfileFailed
 
 # ---------------------------------------------------------------------------
 # Step 6 - Ensure ~/go/bin is on the user's PATH
