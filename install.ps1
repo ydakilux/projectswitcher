@@ -28,6 +28,23 @@ function Write-Skip {
     Write-Host " [skip] $Message" -ForegroundColor DarkGray
 }
 
+# Get-FileHash requires the Microsoft.PowerShell.Utility module to be
+# auto-loaded, which can fail in some restricted/managed environments
+# (e.g. a stripped-down PSModulePath in the process that spawned this
+# script). Direct .NET calls don't depend on module auto-loading, so use
+# those instead for a reliable file-content comparison.
+function Get-Sha256Hex {
+    param([string]$Path)
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha.ComputeHash($bytes)
+        return [System.BitConverter]::ToString($hashBytes) -replace '-', ''
+    } finally {
+        $sha.Dispose()
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -77,8 +94,8 @@ if (-not (Test-Path $BinDir)) {
 # ---------------------------------------------------------------------------
 $needCopyExe = $true
 if (Test-Path $DstExe) {
-    $srcHash = (Get-FileHash $SrcExe -Algorithm SHA256).Hash
-    $dstHash = (Get-FileHash $DstExe -Algorithm SHA256).Hash
+    $srcHash = (Get-Sha256Hex $SrcExe)
+    $dstHash = (Get-Sha256Hex $DstExe)
     if ($srcHash -eq $dstHash) {
         $needCopyExe = $false
         Write-Skip "pw.exe already up to date in $BinDir"
@@ -98,8 +115,8 @@ if (-not (Test-Path $SrcPs1)) {
 } else {
     $needCopyPs1 = $true
     if (Test-Path $DstPs1) {
-        $srcHash = (Get-FileHash $SrcPs1 -Algorithm SHA256).Hash
-        $dstHash = (Get-FileHash $DstPs1 -Algorithm SHA256).Hash
+        $srcHash = (Get-Sha256Hex $SrcPs1)
+        $dstHash = (Get-Sha256Hex $DstPs1)
         if ($srcHash -eq $dstHash) {
             $needCopyPs1 = $false
             Write-Skip "pw-profile.ps1 already up to date in $BinDir"

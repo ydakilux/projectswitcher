@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-02
+
+### Fixed
+
+- `install.ps1` no longer depends on the `Get-FileHash` cmdlet, which failed
+  with "not recognized" in some restricted/managed PowerShell environments
+  (module auto-loading issue). Replaced with a direct `System.IO`/
+  `System.Security.Cryptography` SHA256 implementation, matching the
+  dependency-free approach already used elsewhere in the script.
+
 ## [0.5.0] - 2026-09-02
 
 ### Changed
@@ -143,7 +153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell integration for bash, zsh, fish, and PowerShell.
 - Windows support (cross-compiled `pw.exe`, PowerShell wrapper).
 
-[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/ydakilux/projectswitcher/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ydakilux/projectswitcher/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ydakilux/projectswitcher/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ydakilux/projectswitcher/compare/v0.3.0...v0.3.1
