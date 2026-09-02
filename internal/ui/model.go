@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"math"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -90,6 +91,11 @@ type termTabResultMsg struct {
 
 // explorerResultMsg is sent when an async "open Explorer" attempt finishes.
 type explorerResultMsg struct {
+	err error
+}
+
+// editorResultMsg is sent when an async "launch editor" attempt finishes.
+type editorResultMsg struct {
 	err error
 }
 
@@ -307,6 +313,19 @@ func explorerCmd(path string) tea.Cmd {
 	}
 }
 
+// editorCmd launches the configured editor at path asynchronously, without
+// exiting pw. The editor runs with its working directory set to path and
+// "." as its argument, so editors like `code`/`code .` open a new window
+// there instead of blocking the current process.
+func editorCmd(editor, path string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command(editor, ".")
+		cmd.Dir = path
+		err := cmd.Start()
+		return editorResultMsg{err: err}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -353,6 +372,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.termStatus = "explorer failed: " + msg.err.Error()
 		} else {
 			m.termStatus = "opened in Explorer"
+		}
+		return m, nil
+
+	case editorResultMsg:
+		if msg.err != nil {
+			m.termStatus = "editor failed: " + msg.err.Error()
+		} else {
+			m.termStatus = "opened in editor"
 		}
 		return m, nil
 
@@ -483,11 +510,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case tea.KeyCtrlE:
 			if len(m.filtered) > 0 {
-				m.confirmed = true
-				m.selectedPath = m.filtered[m.cursor].Path
-				m.action = "editor"
+				p := m.filtered[m.cursor]
+				m.termStatus = ""
+				return m, editorCmd(m.editor, p.Path)
 			}
-			return m, tea.Quit
+			return m, nil
 
 		case tea.KeyUp, tea.KeyCtrlP:
 			if m.rightPaneMode == modeFiles {
@@ -1064,7 +1091,7 @@ func (m Model) renderHelpOverlay(background string) string {
 		}},
 		{"Launch shortcuts", []kb{
 			row("Ctrl+O", "Select project, cd, and launch opencode"),
-			row("Ctrl+E", "Select project, cd, and open in configured editor"),
+			row("Ctrl+E", "Open project in configured editor (new window, pw stays open)"),
 			row("Ctrl+T", "Open a new Windows Terminal tab at this path (same shell)"),
 			row("Ctrl+X", "Open this path in Windows Explorer (Windows/WSL only)"),
 		}},

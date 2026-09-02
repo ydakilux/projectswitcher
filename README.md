@@ -73,15 +73,13 @@ echo '{"root": "~/projects"}' > ~/go/bin/config.json
 
 ## Launch Shortcuts
 
-Besides `Enter` (select & `cd`), a few shortcuts select the highlighted
-project, `cd` into it, and launch an external tool:
-
-| Shortcut | Launches |
+| Shortcut | Behavior |
 |----------|----------|
-| `Ctrl+O` | [`opencode`](https://opencode.ai) |
-| `Ctrl+E` | Configured editor (see below) |
-| `Ctrl+T` | New Windows Terminal tab at this path (see below) |
-| `Ctrl+X` | Windows Explorer at this path (see below) |
+| `Enter` | Select highlighted project, `cd` into it, exit pw |
+| `Ctrl+O` | Select project, `cd` into it, exit pw, and launch [`opencode`](https://opencode.ai) |
+| `Ctrl+E` | Open project in configured editor (new window) - pw stays open, no `cd` |
+| `Ctrl+T` | New Windows Terminal tab at this path (see below) - pw stays open |
+| `Ctrl+X` | Windows Explorer at this path (see below) - pw stays open |
 
 ### Editor configuration
 
@@ -131,7 +129,7 @@ Requires `explorer.exe` on `PATH`. Not supported outside Windows/WSL.
 | `←` (Left) | Go back to parent level |
 | `Enter` | Select project & `cd` (works at any depth) |
 | `Ctrl+O` | Select project, `cd`, and launch `opencode` |
-| `Ctrl+E` | Select project, `cd`, and open in the configured editor |
+| `Ctrl+E` | Open project in configured editor (new window, pw stays open) |
 | `Ctrl+T` | Open a new Windows Terminal tab at this path |
 | `Ctrl+X` | Open this path in Windows Explorer |
 | `Esc` | Go back one level, or cancel at root |

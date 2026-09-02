@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-02
+
+### Changed
+
+- `Ctrl+E` no longer exits `pw` or `cd`s the calling shell: it now launches
+  the configured editor directly in a new window and pw stays open, so you
+  can keep browsing/opening multiple projects in your editor without
+  re-running `pw` each time.
+- `make install` now works end-to-end on native Windows too: it
+  automatically runs `install.ps1` instead of just printing instructions to
+  run it manually. WSL/Linux/macOS behavior (hooking bash/zsh/fish rc files)
+  is unchanged.
+
 ## [0.4.0] - 2026-09-02
 
 ### Added
@@ -130,7 +143,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell integration for bash, zsh, fish, and PowerShell.
 - Windows support (cross-compiled `pw.exe`, PowerShell wrapper).
 
-[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/ydakilux/projectswitcher/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ydakilux/projectswitcher/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ydakilux/projectswitcher/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ydakilux/projectswitcher/compare/v0.2.0...v0.3.0
