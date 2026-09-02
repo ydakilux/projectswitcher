@@ -12,6 +12,44 @@ import (
 	"strings"
 )
 
+// OpenExplorer opens Windows Explorer at path, working both natively on
+// Windows and from inside WSL:
+//   - Native Windows: runs `explorer.exe <path>` directly.
+//   - WSL: translates the Linux path to a Windows-visible path via
+//     `wslpath -w` (yields a `\\wsl$\<distro>\...` UNC path for paths
+//     outside /mnt, or a native `C:\...` path for paths under /mnt/c etc.)
+//     before launching `explorer.exe`.
+//
+// explorer.exe often returns a non-zero exit code even on success, so this
+// only reports an error if the process couldn't be started at all.
+func OpenExplorer(path string) error {
+	explorerPath, err := translatePathForExplorer(path)
+	if err != nil {
+		return err
+	}
+	if _, err := exec.LookPath("explorer.exe"); err != nil {
+		return errors.New("explorer.exe not found on PATH")
+	}
+	cmd := exec.Command("explorer.exe", explorerPath)
+	_ = cmd.Start() // explorer.exe's exit code is unreliable; ignore it.
+	return nil
+}
+
+// translatePathForExplorer converts path to a form explorer.exe understands.
+func translatePathForExplorer(path string) (string, error) {
+	if os.Getenv("WSL_DISTRO_NAME") != "" {
+		out, err := exec.Command("wslpath", "-w", path).Output()
+		if err != nil {
+			return "", errors.New("could not translate path via wslpath: " + err.Error())
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	if runtime.GOOS == "windows" {
+		return path, nil
+	}
+	return "", errors.New("opening Explorer requires Windows or WSL")
+}
+
 // OpenNewTab opens a new Windows Terminal tab at path, attempting to match
 // the shell of the current session:
 //   - If running inside WSL (WSL_DISTRO_NAME set), opens a new tab running

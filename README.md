@@ -81,6 +81,7 @@ project, `cd` into it, and launch an external tool:
 | `Ctrl+O` | [`opencode`](https://opencode.ai) |
 | `Ctrl+E` | Configured editor (see below) |
 | `Ctrl+T` | New Windows Terminal tab at this path (see below) |
+| `Ctrl+X` | Windows Explorer at this path (see below) |
 
 ### Editor configuration
 
@@ -101,10 +102,23 @@ session:
 
 - Inside WSL (`WSL_DISTRO_NAME` set): opens a new tab running the same WSL
   distro, `cd`'d to the path.
-- Native Windows: opens `cmd.exe` or `powershell.exe`, guessed from the
-  `PROMPT` env var (cmd.exe always sets it, PowerShell doesn't).
+- Native Windows: opens `cmd.exe`, `powershell.exe`, or `pwsh.exe`, guessed
+  from the `PROMPT` env var (cmd.exe always sets it) and the first
+  `PSModulePath` entry (distinguishes PowerShell 7 from Windows PowerShell
+  5.1).
 
 Requires `wt.exe` on `PATH`. Not supported outside Windows/WSL.
+
+### Windows Explorer (`Ctrl+X`)
+
+`Ctrl+X` opens Windows Explorer at the selected project's path:
+
+- Inside WSL: translates the Linux path to a Windows-visible path via
+  `wslpath -w` (a `\\wsl$\<distro>\...` UNC path, or a native path if it's
+  under `/mnt/c` etc.) before launching Explorer.
+- Native Windows: opens Explorer directly at the path.
+
+Requires `explorer.exe` on `PATH`. Not supported outside Windows/WSL.
 
 ## Keybindings
 
@@ -119,6 +133,7 @@ Requires `wt.exe` on `PATH`. Not supported outside Windows/WSL.
 | `Ctrl+O` | Select project, `cd`, and launch `opencode` |
 | `Ctrl+E` | Select project, `cd`, and open in the configured editor |
 | `Ctrl+T` | Open a new Windows Terminal tab at this path |
+| `Ctrl+X` | Open this path in Windows Explorer |
 | `Esc` | Go back one level, or cancel at root |
 | `Ctrl+C` | Cancel immediately (any depth) |
 | `Ctrl+U` | Clear filter |

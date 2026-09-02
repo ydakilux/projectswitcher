@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-02
+
+### Added
+
+- `Ctrl+X` shortcut: open Windows Explorer at the selected project's path.
+  Works both natively on Windows and from inside WSL (translates the Linux
+  path via `wslpath -w` first). Requires `explorer.exe` on `PATH`;
+  Windows/WSL only.
+
 ## [0.3.1] - 2026-09-02
 
 ### Fixed
@@ -121,7 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell integration for bash, zsh, fish, and PowerShell.
 - Windows support (cross-compiled `pw.exe`, PowerShell wrapper).
 
-[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ydakilux/projectswitcher/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ydakilux/projectswitcher/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ydakilux/projectswitcher/compare/v0.2.0...v0.3.0
 [0.1.0]: https://github.com/ydakilux/projectswitcher/releases/tag/v0.1.0

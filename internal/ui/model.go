@@ -88,6 +88,11 @@ type termTabResultMsg struct {
 	err error
 }
 
+// explorerResultMsg is sent when an async "open Explorer" attempt finishes.
+type explorerResultMsg struct {
+	err error
+}
+
 // projectSource implements fuzzy.Source for fuzzy matching.
 type projectSource struct {
 	projects []project.Project
@@ -294,6 +299,14 @@ func termTabCmd(path string) tea.Cmd {
 	}
 }
 
+// explorerCmd opens Windows Explorer at path asynchronously.
+func explorerCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		err := term.OpenExplorer(path)
+		return explorerResultMsg{err: err}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -332,6 +345,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.termStatus = "new tab failed: " + msg.err.Error()
 		} else {
 			m.termStatus = "opened new terminal tab"
+		}
+		return m, nil
+
+	case explorerResultMsg:
+		if msg.err != nil {
+			m.termStatus = "explorer failed: " + msg.err.Error()
+		} else {
+			m.termStatus = "opened in Explorer"
 		}
 		return m, nil
 
@@ -516,6 +537,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := m.filtered[m.cursor]
 				m.termStatus = ""
 				return m, termTabCmd(p.Path)
+			}
+			return m, nil
+
+		case tea.KeyCtrlX:
+			if len(m.filtered) > 0 {
+				p := m.filtered[m.cursor]
+				m.termStatus = ""
+				return m, explorerCmd(p.Path)
 			}
 			return m, nil
 
@@ -973,7 +1002,7 @@ func (m Model) View() string {
 	previewContent := m.previewVP.View()
 
 	// Help bar
-	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^t new tab · ^r pull · tab git/files · ? help · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
+	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^t new tab · ^x explorer · ^r pull · tab git/files · ? help · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
 	if m.pulling {
 		helpText = "pulling…"
 	} else if m.pullStatus != "" {
@@ -1037,6 +1066,7 @@ func (m Model) renderHelpOverlay(background string) string {
 			row("Ctrl+O", "Select project, cd, and launch opencode"),
 			row("Ctrl+E", "Select project, cd, and open in configured editor"),
 			row("Ctrl+T", "Open a new Windows Terminal tab at this path (same shell)"),
+			row("Ctrl+X", "Open this path in Windows Explorer (Windows/WSL only)"),
 		}},
 		{"Right pane", []kb{
 			row("Tab", "Toggle between Git view and Files view"),
