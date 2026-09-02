@@ -17,6 +17,7 @@ import (
 	"pw/internal/gitinfo"
 	"pw/internal/preview"
 	"pw/internal/project"
+	"pw/internal/term"
 )
 
 // styles holds all lipgloss styles bound to the real tty renderer.
@@ -82,6 +83,11 @@ type pullResultMsg struct {
 	err    error
 }
 
+// termTabResultMsg is sent when an async "open new terminal tab" attempt finishes.
+type termTabResultMsg struct {
+	err error
+}
+
 // projectSource implements fuzzy.Source for fuzzy matching.
 type projectSource struct {
 	projects []project.Project
@@ -112,6 +118,7 @@ type Model struct {
 	version      string
 	pulling      bool
 	pullStatus   string
+	termStatus   string
 	// right-pane file explorer state
 	rightPaneMode int            // modeGit or modeFiles
 	filesDir      string         // current dir being browsed in files view
@@ -119,6 +126,7 @@ type Model struct {
 	fileEntries   []preview.FileEntry
 	fileCursor    int
 	fileNavStack  []string // dir history for going back in files view
+	showHelp      bool     // whether the full-keybindings help popup is shown
 }
 
 // New creates a new Model bound to the given tty renderer. If cwd is a
@@ -278,6 +286,14 @@ func pullCmd(path string) tea.Cmd {
 	}
 }
 
+// termTabCmd opens a new terminal tab at path asynchronously.
+func termTabCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		err := term.OpenNewTab(path)
+		return termTabResultMsg{err: err}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -311,7 +327,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 
+	case termTabResultMsg:
+		if msg.err != nil {
+			m.termStatus = "new tab failed: " + msg.err.Error()
+		} else {
+			m.termStatus = "opened new terminal tab"
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		if m.showHelp {
+			// Any key closes the help popup.
+			m.showHelp = false
+			return m, nil
+		}
+		if msg.String() == "?" {
+			m.showHelp = true
+			return m, nil
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			m.confirmed = false
@@ -478,11 +511,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case tea.KeyCtrlT:
+			if len(m.filtered) > 0 {
+				p := m.filtered[m.cursor]
+				m.termStatus = ""
+				return m, termTabCmd(p.Path)
+			}
+			return m, nil
+
 		case tea.KeyCtrlU:
 			// Clear filter
 			m.filterInput.SetValue("")
 			m.filtered = m.sortedProjects("")
 			m.cursor = 0
+			m.pullStatus = ""
+			m.termStatus = ""
 			m.previewVP.SetContent(m.renderPreviewContent())
 			return m, m.loadPreviewCmd()
 
@@ -930,11 +973,13 @@ func (m Model) View() string {
 	previewContent := m.previewVP.View()
 
 	// Help bar
-	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^r pull · tab git/files · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
+	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^t new tab · ^r pull · tab git/files · ? help · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
 	if m.pulling {
 		helpText = "pulling…"
 	} else if m.pullStatus != "" {
 		helpText = m.pullStatus
+	} else if m.termStatus != "" {
+		helpText = m.termStatus
 	}
 	verText := "v" + m.version
 	avail := m.width - len([]rune(verText)) - 1
@@ -956,7 +1001,82 @@ func (m Model) View() string {
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, rightPane)
 
-	return body + "\n" + help
+	full := body + "\n" + help
+
+	if m.showHelp {
+		return m.renderHelpOverlay(full)
+	}
+	return full
+}
+
+// renderHelpOverlay draws a bordered popup listing every keybinding,
+// centered over the given background content.
+func (m Model) renderHelpOverlay(background string) string {
+	r := m.styles.renderer
+	titleStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	keyStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
+	descStyle := r.NewStyle().Foreground(lipgloss.Color("7"))
+	sectionStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
+
+	type kb struct{ key, desc string }
+	row := func(key, desc string) kb { return kb{key, desc} }
+
+	sections := []struct {
+		title string
+		keys  []kb
+	}{
+		{"Navigation", []kb{
+			row("↑ / ↓, Ctrl+P/N", "Move cursor up/down"),
+			row("→ (Right)", "Descend into folder / enter directory (files view)"),
+			row("← (Left)", "Go back / go up a directory (files view)"),
+			row("Enter", "Select project & cd, or enter directory (files view)"),
+			row("Esc", "Go back one level, or cancel at root"),
+			row("Ctrl+C", "Cancel immediately (any depth)"),
+		}},
+		{"Launch shortcuts", []kb{
+			row("Ctrl+O", "Select project, cd, and launch opencode"),
+			row("Ctrl+E", "Select project, cd, and open in configured editor"),
+			row("Ctrl+T", "Open a new Windows Terminal tab at this path (same shell)"),
+		}},
+		{"Right pane", []kb{
+			row("Tab", "Toggle between Git view and Files view"),
+			row("Ctrl+D / Ctrl+F / PgDn", "Scroll preview down"),
+			row("Ctrl+B / PgUp", "Scroll preview up"),
+			row("Ctrl+R", "git pull the highlighted repo"),
+		}},
+		{"Filter", []kb{
+			row("Type anything", "Filter projects (fuzzy)"),
+			row("Ctrl+U", "Clear filter"),
+		}},
+		{"Misc", []kb{
+			row("?", "Toggle this help popup"),
+		}},
+	}
+
+	var sb strings.Builder
+	sb.WriteString(titleStyle.Render("Keybindings"))
+	sb.WriteString("\n\n")
+	for i, sec := range sections {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(sectionStyle.Render(sec.title))
+		sb.WriteString("\n")
+		for _, k := range sec.keys {
+			sb.WriteString(fmt.Sprintf("  %s  %s\n", keyStyle.Render(fmt.Sprintf("%-22s", k.key)), descStyle.Render(k.desc)))
+		}
+	}
+	sb.WriteString("\n")
+	sb.WriteString(m.styles.sep.Render("Press any key to close"))
+
+	box := r.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("12")).
+		Padding(1, 2).
+		Render(sb.String())
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
+		lipgloss.WithWhitespaceChars(" "), lipgloss.WithWhitespaceForeground(lipgloss.Color("0")))
 }
 
 // SelectedPath returns the selected path and confirmation status.

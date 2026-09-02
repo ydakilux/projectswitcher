@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
@@ -45,8 +46,6 @@ func main() {
 	cfg, cfgFound, cfgErr := config.Load()
 	if cfgErr != nil {
 		fmt.Fprintln(os.Stderr, "warning: config.json:", cfgErr)
-	} else if !cfgFound {
-		fmt.Fprintln(os.Stderr, "info: no config.json found next to pw binary; using flag, PW_ROOT env, or ~/work as root")
 	}
 
 	// Resolve root: flag > PW_ROOT env > config.json > $HOME/work
@@ -86,14 +85,41 @@ func main() {
 	}
 	root = absRoot
 
+	// Offer to create config.json next to the exe if it doesn't exist yet,
+	// so the resolved settings are persisted and editable (useful on
+	// Windows where there's no shell rc file to set PW_ROOT/PW_EDITOR).
+	var cfgPath string
+	if dir := config.ExeDir(); dir != "" {
+		cfgPath = filepath.Join(dir, "config.json")
+	}
+	if !cfgFound && cfgErr == nil && cfgPath != "" {
+		fmt.Fprintf(os.Stderr, "no config.json found. Create %s with root %q? [Y/n] ", cfgPath, root)
+		reader := bufio.NewReader(os.Stdin)
+		answer, _ := reader.ReadString('\n')
+		answer = strings.ToLower(strings.TrimSpace(answer))
+		if answer == "" || answer == "y" || answer == "yes" {
+			if err := config.Save(filepath.Dir(cfgPath), config.Config{Root: root, Editor: editor}); err != nil {
+				fmt.Fprintln(os.Stderr, "warning: could not create config.json:", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "info: created %s - edit \"root\" if this isn't the right path\n", cfgPath)
+			}
+		}
+	}
+
 	// Validate root
 	info, err := os.Stat(root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "root directory %q does not exist: %v\n", root, err)
+		if cfgPath != "" {
+			fmt.Fprintf(os.Stderr, "edit \"root\" in %s to point at your projects directory, then run pw again\n", cfgPath)
+		}
 		os.Exit(1)
 	}
 	if !info.IsDir() {
 		fmt.Fprintf(os.Stderr, "root path %q is not a directory\n", root)
+		if cfgPath != "" {
+			fmt.Fprintf(os.Stderr, "edit \"root\" in %s to point at your projects directory, then run pw again\n", cfgPath)
+		}
 		os.Exit(1)
 	}
 

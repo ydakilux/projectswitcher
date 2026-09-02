@@ -73,13 +73,14 @@ echo '{"root": "~/projects"}' > ~/go/bin/config.json
 
 ## Launch Shortcuts
 
-Besides `Enter` (select & `cd`), two shortcuts select the highlighted
+Besides `Enter` (select & `cd`), a few shortcuts select the highlighted
 project, `cd` into it, and launch an external tool:
 
 | Shortcut | Launches |
 |----------|----------|
 | `Ctrl+O` | [`opencode`](https://opencode.ai) |
 | `Ctrl+E` | Configured editor (see below) |
+| `Ctrl+T` | New Windows Terminal tab at this path (see below) |
 
 ### Editor configuration
 
@@ -91,6 +92,19 @@ via the `editor` field in `config.json`:
 ```
 
 **Precedence:** `PW_EDITOR` env var > `config.json` `editor` field > `code` (default).
+
+### New terminal tab (`Ctrl+T`)
+
+`Ctrl+T` opens a new [Windows Terminal](https://aka.ms/terminal) tab at the
+selected project's path, best-effort matching the shell of the current
+session:
+
+- Inside WSL (`WSL_DISTRO_NAME` set): opens a new tab running the same WSL
+  distro, `cd`'d to the path.
+- Native Windows: opens `cmd.exe` or `powershell.exe`, guessed from the
+  `PROMPT` env var (cmd.exe always sets it, PowerShell doesn't).
+
+Requires `wt.exe` on `PATH`. Not supported outside Windows/WSL.
 
 ## Keybindings
 
@@ -104,12 +118,14 @@ via the `editor` field in `config.json`:
 | `Enter` | Select project & `cd` (works at any depth) |
 | `Ctrl+O` | Select project, `cd`, and launch `opencode` |
 | `Ctrl+E` | Select project, `cd`, and open in the configured editor |
+| `Ctrl+T` | Open a new Windows Terminal tab at this path |
 | `Esc` | Go back one level, or cancel at root |
 | `Ctrl+C` | Cancel immediately (any depth) |
 | `Ctrl+U` | Clear filter |
 | `Ctrl+D` / `Ctrl+F` / `PgDn` | Scroll preview down |
 | `Ctrl+B` / `PgUp` | Scroll preview up |
 | `Tab` | Toggle right pane between Git view and Files view |
+| `?` | Toggle full keybindings help popup |
 
 ## Files view
 
@@ -158,7 +174,7 @@ go build -o pw.exe .
 
 Add to your PowerShell profile (`$PROFILE`):
 ```powershell
-. C:\path\to\shell\pw.ps1
+. C:\path\to\shell\pw-profile.ps1
 ```
 
 Then use `pw` normally — it calls `pw.exe` and `cd`s into the selected directory.

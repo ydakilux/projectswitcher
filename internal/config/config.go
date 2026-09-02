@@ -51,3 +51,38 @@ func Load() (Config, bool, error) {
 	cfg, found, err := loadFromDir(filepath.Dir(exe))
 	return cfg, found, err
 }
+
+// ExeDir returns the directory of the running executable (symlinks resolved),
+// i.e. the directory Load reads config.json from. Returns "" if it can't be
+// determined.
+func ExeDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(exe)
+}
+
+// Save writes cfg as config.json in dir, creating the file if it doesn't
+// already exist. It never overwrites an existing config.json.
+func Save(dir string, cfg Config) error {
+	if dir == "" {
+		return fmt.Errorf("config: no directory to save to")
+	}
+	cfgPath := filepath.Join(dir, "config.json")
+	if _, err := os.Stat(cfgPath); err == nil {
+		return nil // already exists, don't clobber
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(cfgPath, data, 0644)
+}

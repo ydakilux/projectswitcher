@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-02
+
+### Added
+
+- `Ctrl+T` shortcut: open a new Windows Terminal tab at the selected
+  project's path, best-effort matching the current session's shell (WSL
+  distro, PowerShell, or cmd.exe). Requires `wt.exe` on `PATH`; Windows/WSL
+  only.
+- `?` toggles a full-keybindings help popup, listing every shortcut grouped
+  by category (navigation, launch shortcuts, right pane, filter).
+- If no `config.json` exists next to the `pw` binary, `pw` now interactively
+  prompts to create one with the resolved root/editor settings (`[Y/n]`,
+  defaults to yes), so the path is persisted and easy to edit afterward
+  instead of silently falling back to `$HOME/work` every run.
+
+### Fixed
+
+- Windows install/build is now considerably more robust after end-to-end
+  testing on a real Windows machine:
+  - `Makefile`: `help`/`build`/`test`/`clean`/`install` now work under native
+    Windows `make` (e.g. GnuWin32/mingw32-make), which previously bypassed
+    `SHELL` for simple recipe lines via a raw `CreateProcess`, failing to
+    find `go`. Recipes are now explicitly routed through `cmd /c` on
+    Windows.
+  - `install.ps1`: renamed `shell/pw.ps1` to `shell/pw-profile.ps1`. Once
+    `~/go/bin` is added to PATH, a file literally named `pw.ps1` there would
+    shadow `pw.exe` when typing bare `pw` (PowerShell resolves script files
+    by base name), causing an "unsigned script" execution-policy error
+    instead of running the `pw` function. A stale `pw.ps1` from a previous
+    install is now also removed automatically.
+  - `install.ps1`: the profile hook now bundles
+    `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force`
+    ahead of the dot-source line, so an unsigned `pw-profile.ps1` loads
+    under a default/Restricted execution policy with no manual step.
+  - `install.ps1`: profile-hook step now uses raw `System.IO` calls instead
+    of `Test-Path`/`New-Item`/`Add-Content`, which could misreport a
+    directory as present (or fail to create the profile file) on some
+    OneDrive-synced profile paths; falls back to precise manual
+    File-Explorer instructions if the write still fails.
+  - `install.ps1`: now also adds `~/go/bin` to the user's persisted PATH, so
+    `pw.exe` resolves by name even if the profile hook doesn't take effect.
+  - `install.ps1`: removed non-ASCII em-dash characters, which Windows
+    PowerShell 5.1 could misdecode (UTF-8 without BOM read via the system
+    codepage), corrupting script parsing ("missing closing brace").
+  - `shell/pw-profile.ps1`: forces array coercion on `pw.exe`'s captured
+    output (PowerShell can collapse it to a plain string under some
+    conditions, silently breaking line indexing), trims stray whitespace,
+    and now surfaces `Set-Location` failures instead of failing silently.
+
 ## [0.2.0] - 2026-09-01
 
 ### Added
@@ -54,5 +103,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell integration for bash, zsh, fish, and PowerShell.
 - Windows support (cross-compiled `pw.exe`, PowerShell wrapper).
 
-[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ydakilux/projectswitcher/compare/v0.2.0...v0.3.0
 [0.1.0]: https://github.com/ydakilux/projectswitcher/releases/tag/v0.1.0

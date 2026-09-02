@@ -1,10 +1,10 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Install pw (project switcher) — PowerShell equivalent of `make install`.
+    Install pw (project switcher) - PowerShell equivalent of `make install`.
 .DESCRIPTION
     Builds pw.exe, copies it and the PowerShell shell helper to ~/go/bin,
-    and hooks pw.ps1 into the current user's PowerShell profile.
+    and hooks pw-profile.ps1 into the current user's PowerShell profile.
 #>
 
 Set-StrictMode -Version Latest
@@ -34,14 +34,19 @@ function Write-Skip {
 $RepoRoot   = $PSScriptRoot
 $BinDir     = Join-Path $HOME 'go\bin'
 $SrcExe     = Join-Path $RepoRoot 'pw.exe'
-$SrcPs1     = Join-Path $RepoRoot 'shell\pw.ps1'
+$SrcPs1     = Join-Path $RepoRoot 'shell\pw-profile.ps1'
 $DstExe     = Join-Path $BinDir   'pw.exe'
-$DstPs1     = Join-Path $BinDir   'pw.ps1'
-$HookLine   = '. "$HOME\go\bin\pw.ps1"'
+$DstPs1     = Join-Path $BinDir   'pw-profile.ps1'
+$HookLine   = '. "$HOME\go\bin\pw-profile.ps1"'
 $HookComment = '# pw project switcher'
+# Bundled with the hook so a default/Restricted execution policy doesn't
+# block loading the (unsigned) pw-profile.ps1 script. Scoped to Process only
+# - it doesn't persist anywhere and doesn't require writing to any config
+# file, so it can't be blocked the same way profile writes sometimes are.
+$PolicyLine = 'Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force'
 
 # ---------------------------------------------------------------------------
-# Step 1 — Build
+# Step 1 - Build
 # ---------------------------------------------------------------------------
 Write-Step 'Building pw.exe ...'
 try {
@@ -54,7 +59,7 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# Step 2 — Ensure ~/go/bin exists
+# Step 2 - Ensure ~/go/bin exists
 # ---------------------------------------------------------------------------
 if (-not (Test-Path $BinDir)) {
     Write-Step "Creating $BinDir ..."
@@ -65,7 +70,7 @@ if (-not (Test-Path $BinDir)) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 3 — Copy pw.exe (skip if already up to date)
+# Step 3 - Copy pw.exe (skip if already up to date)
 # ---------------------------------------------------------------------------
 $needCopyExe = $true
 if (Test-Path $DstExe) {
@@ -83,10 +88,10 @@ if ($needCopyExe) {
 }
 
 # ---------------------------------------------------------------------------
-# Step 4 — Copy shell/pw.ps1
+# Step 4 - Copy shell/pw-profile.ps1
 # ---------------------------------------------------------------------------
 if (-not (Test-Path $SrcPs1)) {
-    Write-Host "[warn] $SrcPs1 not found — skipping shell helper copy." -ForegroundColor Yellow
+    Write-Host "[warn] $SrcPs1 not found - skipping shell helper copy." -ForegroundColor Yellow
 } else {
     $needCopyPs1 = $true
     if (Test-Path $DstPs1) {
@@ -94,44 +99,91 @@ if (-not (Test-Path $SrcPs1)) {
         $dstHash = (Get-FileHash $DstPs1 -Algorithm SHA256).Hash
         if ($srcHash -eq $dstHash) {
             $needCopyPs1 = $false
-            Write-Skip "pw.ps1 already up to date in $BinDir"
+            Write-Skip "pw-profile.ps1 already up to date in $BinDir"
         }
     }
     if ($needCopyPs1) {
-        Write-Step "Copying shell\pw.ps1 to $BinDir ..."
+        Write-Step "Copying shell\pw-profile.ps1 to $BinDir ..."
         Copy-Item -Path $SrcPs1 -Destination $DstPs1 -Force
-        Write-Ok "Installed pw.ps1  -> $DstPs1"
+        Write-Ok "Installed pw-profile.ps1 -> $DstPs1"
     }
 }
 
+# Remove stale pw.ps1 from a previous install (renamed to pw-profile.ps1).
+# A leftover pw.ps1 next to pw.exe in BinDir would shadow the `pw` command
+# (PowerShell resolves bare script/exe names, and pw.ps1 isn't signed).
+$staleOldPs1 = Join-Path $BinDir 'pw.ps1'
+if (Test-Path $staleOldPs1) {
+    Remove-Item -Path $staleOldPs1 -Force
+    Write-Ok "Removed stale $staleOldPs1 from a previous install"
+}
+
 # ---------------------------------------------------------------------------
-# Step 5 — Hook pw.ps1 into PowerShell profile
+# Step 5 - Hook pw-profile.ps1 into PowerShell profile
 # ---------------------------------------------------------------------------
 Write-Step "Checking PowerShell profile ($PROFILE) ..."
 
-# Ensure profile directory exists
-$profileDir = Split-Path $PROFILE -Parent
-if (-not (Test-Path $profileDir)) {
-    New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
-    Write-Ok "Created profile directory: $profileDir"
+# Use raw .NET IO instead of Test-Path/New-Item: on some OneDrive-synced
+# profile paths those cmdlets can report a directory/file as present when
+# it isn't yet materialized, causing New-Item to fail with a misleading
+# "could not find file" error. System.IO talks to the filesystem directly
+# and creates missing directories/files as needed.
+$profileWriteFailed = $false
+try {
+    $profileDir = Split-Path $PROFILE -Parent
+    if ($profileDir) {
+        [System.IO.Directory]::CreateDirectory($profileDir) | Out-Null
+    }
+
+    $profileContent = ''
+    if ([System.IO.File]::Exists($PROFILE)) {
+        $profileContent = [System.IO.File]::ReadAllText($PROFILE)
+    }
+
+    if ($profileContent -like "*$HookLine*") {
+        Write-Skip "pw hook already present in profile"
+    } else {
+        # Prepend the execution-policy bypass so an unsigned pw-profile.ps1
+        # loads under a default/Restricted policy, with no manual step and
+        # no persisted config file (Process scope only).
+        $append = "`n$HookComment`n$PolicyLine`n$HookLine`n"
+        [System.IO.File]::AppendAllText($PROFILE, $append)
+        Write-Ok "Added pw hook to $PROFILE"
+    }
+} catch {
+    $profileWriteFailed = $true
+    Write-Host "[warn] Could not update PowerShell profile automatically: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host "       This can happen on some OneDrive-synced Documents folders (corporate policy or sync quirk)." -ForegroundColor Yellow
+    Write-Host "       pw.exe and pw-profile.ps1 are installed; just add the pw hook manually:" -ForegroundColor Yellow
+    Write-Host "         1. In File Explorer, go to: $profileDir" -ForegroundColor Yellow
+    Write-Host "            (create the 'PowerShell' folder there if it doesn't exist)" -ForegroundColor Yellow
+    Write-Host "         2. Create/open the file: $(Split-Path $PROFILE -Leaf)" -ForegroundColor Yellow
+    Write-Host "         3. Add these two lines and save:" -ForegroundColor Yellow
+    Write-Host "              $PolicyLine" -ForegroundColor Yellow
+    Write-Host "              $HookLine" -ForegroundColor Yellow
 }
 
-# Ensure profile file exists
-if (-not (Test-Path $PROFILE)) {
-    New-Item -ItemType File -Path $PROFILE -Force | Out-Null
-    Write-Ok "Created profile file: $PROFILE"
-}
-
-$profileContent = Get-Content -Path $PROFILE -Raw -ErrorAction SilentlyContinue
-if ($null -eq $profileContent) { $profileContent = '' }
-
-if ($profileContent -like "*$HookLine*") {
-    Write-Skip "pw hook already present in profile"
-} else {
-    # Append with a blank line separator, comment, and the dot-source line
-    $append = "`n$HookComment`n$HookLine`n"
-    Add-Content -Path $PROFILE -Value $append -NoNewline:$false
-    Write-Ok "Added pw hook to $PROFILE"
+# ---------------------------------------------------------------------------
+# Step 6 - Ensure ~/go/bin is on the user's PATH
+# ---------------------------------------------------------------------------
+# Adds BinDir to the persisted User PATH so pw.exe resolves by name even if
+# the profile hook above didn't take (e.g. profile not sourced yet, or the
+# `pw` function isn't loaded in the current session).
+try {
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($null -eq $userPath) { $userPath = '' }
+    $pathEntries = $userPath -split ';' | Where-Object { $_ -ne '' }
+    $alreadyOnPath = $pathEntries | Where-Object { $_.TrimEnd('\') -ieq $BinDir.TrimEnd('\') }
+    if ($alreadyOnPath) {
+        Write-Skip "$BinDir already on PATH"
+    } else {
+        $newPath = if ($userPath -and -not $userPath.EndsWith(';')) { "$userPath;$BinDir" } else { "$userPath$BinDir" }
+        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+        Write-Ok "Added $BinDir to your User PATH (restart your terminal to pick it up)"
+    }
+} catch {
+    Write-Host "[warn] Could not update PATH automatically: $($_.Exception.Message)" -ForegroundColor Yellow
+    Write-Host "       Add $BinDir to your PATH manually if you want to run pw.exe by name from any directory." -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------------------
@@ -139,4 +191,9 @@ if ($profileContent -like "*$HookLine*") {
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host 'pw installed successfully.' -ForegroundColor Green
-Write-Host "Restart your PowerShell session (or run: . `$PROFILE) to activate." -ForegroundColor Yellow
+if ($profileWriteFailed) {
+    Write-Host 'NOTE: the pw hook could not be added to your profile automatically - see the' -ForegroundColor Yellow
+    Write-Host '      manual steps above. Until then, "pw" will not cd/launch correctly.' -ForegroundColor Yellow
+} else {
+    Write-Host "Restart your PowerShell session (or run: . `$PROFILE) to activate." -ForegroundColor Yellow
+}
