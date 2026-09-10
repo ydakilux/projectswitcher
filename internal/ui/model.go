@@ -143,6 +143,10 @@ type Model struct {
 	fileCursor    int
 	fileNavStack  []string // dir history for going back in files view
 	showHelp      bool     // whether the full-keybindings help popup is shown
+	// new-directory prompt state (files pane, "N" shortcut)
+	newDirModal bool
+	newDirInput textinput.Model
+	newDirError string
 }
 
 // New creates a new Model bound to the given tty renderer. If cwd is a
@@ -460,6 +464,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.newDirModal {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.newDirModal = false
+				m.newDirInput.SetValue("")
+				m.newDirError = ""
+				return m, nil
+			case tea.KeyEnter:
+				name := strings.TrimSpace(m.newDirInput.Value())
+				if name == "" {
+					m.newDirError = "name cannot be empty"
+					return m, nil
+				}
+				if err := preview.CreateDir(m.filesDir, name); err != nil {
+					m.newDirError = err.Error()
+					return m, nil
+				}
+				m.newDirModal = false
+				m.newDirInput.SetValue("")
+				m.newDirError = ""
+				m = m.reloadFileEntries()
+				for i, fe := range m.fileEntries {
+					if fe.Name == name {
+						m.fileCursor = i
+						break
+					}
+				}
+				m.previewVP.SetContent(m.renderPreviewContent())
+				m.scrollFilesCursorIntoView()
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.newDirInput, cmd = m.newDirInput.Update(msg)
+				return m, cmd
+			}
+		}
 		if m.showHelp {
 			// Any key closes the help popup.
 			m.showHelp = false
@@ -468,6 +508,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "?" {
 			m.showHelp = true
 			return m, nil
+		}
+		if msg.Type == tea.KeyCtrlK && m.rightPaneMode == modeFiles {
+			ti := textinput.New()
+			ti.Placeholder = "new directory name..."
+			ti.Focus()
+			ti.CharLimit = 200
+			m.newDirInput = ti
+			m.newDirError = ""
+			m.newDirModal = true
+			return m, textinput.Blink
 		}
 		if s := msg.String(); m.favoritesOnly && m.filterInput.Value() == "" && len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
 			n := int(s[0] - '0')
@@ -1199,7 +1249,7 @@ func (m Model) View() string {
 	previewContent := m.previewVP.View()
 
 	// Help bar
-	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^t new tab · ^x explorer · ^r pull · ^f favorite · ^g favorites view · 1-9 highlight favorite (empty filter) · tab git/files · ? help · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
+	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^t new tab · ^x explorer · ^r pull · ^f favorite · ^g favorites view · 1-9 highlight favorite (empty filter) · tab git/files · ^k new dir (files) · ? help · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
 	if m.pulling {
 		helpText = "pulling…"
 	} else if m.pullStatus != "" {
@@ -1229,10 +1279,42 @@ func (m Model) View() string {
 
 	full := body + "\n" + help
 
+	if m.newDirModal {
+		return m.renderNewDirOverlay(full)
+	}
 	if m.showHelp {
 		return m.renderHelpOverlay(full)
 	}
 	return full
+}
+
+// renderNewDirOverlay draws a small bordered prompt for entering a new
+// directory name, centered over the given background content.
+func (m Model) renderNewDirOverlay(background string) string {
+	r := m.styles.renderer
+	titleStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	errStyle := r.NewStyle().Foreground(lipgloss.Color("9"))
+
+	var sb strings.Builder
+	sb.WriteString(titleStyle.Render("New directory in " + m.filesDir))
+	sb.WriteString("\n\n")
+	sb.WriteString(m.newDirInput.View())
+	if m.newDirError != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(errStyle.Render(m.newDirError))
+	}
+	sb.WriteString("\n\n")
+	sb.WriteString(m.styles.sep.Render("Enter: create · Esc: cancel"))
+
+	box := r.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("12")).
+		Padding(1, 2).
+		Width(60).
+		Render(sb.String())
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
+		lipgloss.WithWhitespaceChars(" "), lipgloss.WithWhitespaceForeground(lipgloss.Color("0")))
 }
 
 // renderHelpOverlay draws a bordered popup listing every keybinding,
@@ -1275,6 +1357,7 @@ func (m Model) renderHelpOverlay(background string) string {
 			row("Ctrl+D / PgDn", "Scroll preview down"),
 			row("Ctrl+B / PgUp", "Scroll preview up"),
 			row("Ctrl+R", "git pull the highlighted repo"),
+			row("Ctrl+K", "Files view: create a new directory in the current folder"),
 		}},
 		{"Filter", []kb{
 			row("Type anything", "Filter projects (fuzzy)"),

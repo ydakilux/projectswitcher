@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-10
+
+### Added
+
+- `Ctrl+K` in the files view creates a new directory in the current folder
+  (prompt for a name, `Enter` to create, `Esc` to cancel).
+
 ### Changed
 
 - Stopped tracking the built `pw.exe` binary in git (matches existing

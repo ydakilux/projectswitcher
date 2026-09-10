@@ -53,6 +53,21 @@ func ListDirEntries(dir string, gitStatuses map[string]string, repoRoot string) 
 }
 
 
+// CreateDir creates a new directory named name inside parentPath (and any
+// missing intermediate directories, via os.MkdirAll). Returns an error if
+// the name is empty or the directory already exists.
+func CreateDir(parentPath, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return os.ErrInvalid
+	}
+	target := filepath.Join(parentPath, name)
+	if _, err := os.Stat(target); err == nil {
+		return os.ErrExist
+	}
+	return os.MkdirAll(target, 0o755)
+}
+
 // Preview holds the preview data for a project.
 type Preview struct {
 	Readme string
