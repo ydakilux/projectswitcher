@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"os/exec"
@@ -102,6 +105,16 @@ type editorResultMsg struct {
 	err error
 }
 
+// mdLiveResultMsg is sent when an async "launch md-to-pdf live preview"
+// attempt finishes: either the server failed to start (err set), or it
+// reported ready at url, optionally with a separate browserErr if the
+// server came up fine but opening the browser failed.
+type mdLiveResultMsg struct {
+	url        string
+	err        error
+	browserErr error
+}
+
 // projectSource implements fuzzy.Source for fuzzy matching.
 type projectSource struct {
 	projects []project.Project
@@ -128,6 +141,7 @@ type Model struct {
 	confirmed     bool
 	action        string
 	editor        string
+	mdToPdfBin    string // "md-to-pdf" binary path/name; empty if not installed
 	width         int
 	height        int
 	styles        styles
@@ -153,7 +167,9 @@ type Model struct {
 // directory under root, the switcher opens with the nav stack descended
 // down to and the cursor on the active subfolder matching cwd. editor is
 // the configured file editor command used by the "open in editor" shortcut.
-func New(root string, projects []project.Project, store *state.Store, renderer *lipgloss.Renderer, version string, cwd string, editor string) Model {
+// mdToPdfBin is the resolved "md-to-pdf" binary (empty if not installed),
+// used by the files-view "open + live preview" shortcut for Markdown files.
+func New(root string, projects []project.Project, store *state.Store, renderer *lipgloss.Renderer, version string, cwd string, editor string, mdToPdfBin string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "filter projects..."
 	ti.Focus()
@@ -172,6 +188,7 @@ func New(root string, projects []project.Project, store *state.Store, renderer *
 		styles:       newStyles(renderer),
 		version:      version,
 		editor:       editor,
+		mdToPdfBin:   mdToPdfBin,
 	}
 	m.filtered = m.sortedProjects("")
 	m = m.descendToCwd(cwd)
@@ -406,6 +423,81 @@ func editorCmd(editor, path string) tea.Cmd {
 	}
 }
 
+// editorFileCmd launches the configured editor on a single file
+// asynchronously, without exiting pw (e.g. `code path/to/file.md`).
+func editorFileCmd(editor, filePath string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command(editor, filePath)
+		err := cmd.Start()
+		return editorResultMsg{err: err}
+	}
+}
+
+// mdLiveCmd launches `md-to-pdf serve <filePath>` asynchronously, starting
+// a live-preview server for the given Markdown file. It does not pass
+// md-to-pdf's own --open flag: on some setups (e.g. WSL images without
+// xdg-open/wslu) that flag fails to open a browser silently, with no error
+// and no indication anything went wrong. Instead this scans the server's
+// stdout for its "serve-ready ... url=<url>" line to get the real listen
+// URL (respecting whatever port it actually bound), then opens that URL
+// itself via term.OpenBrowser (WSL/Windows/xdg-open aware). The server
+// process is left running detached; pw does not wait on or manage its
+// lifecycle beyond this readiness check.
+func mdLiveCmd(bin, filePath string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command(bin, "serve", filePath)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return mdLiveResultMsg{err: err}
+		}
+		var stderrBuf bytes.Buffer
+		cmd.Stderr = &stderrBuf
+		if err := cmd.Start(); err != nil {
+			return mdLiveResultMsg{err: err}
+		}
+
+		type ready struct {
+			url string
+			err error
+		}
+		readyCh := make(chan ready, 1)
+		go func() {
+			scanner := bufio.NewScanner(stdout)
+			for scanner.Scan() {
+				line := scanner.Text()
+				idx := strings.Index(line, "url=")
+				if idx == -1 {
+					continue
+				}
+				url := strings.TrimSpace(line[idx+len("url="):])
+				if sp := strings.IndexByte(url, ' '); sp != -1 {
+					url = url[:sp]
+				}
+				readyCh <- ready{url: url}
+				return
+			}
+			// stdout closed without ever printing a ready line: the
+			// process exited (or crashed) before the server came up.
+			_ = cmd.Wait()
+			msg := strings.TrimSpace(stderrBuf.String())
+			if msg == "" {
+				msg = "md-to-pdf exited before starting the live server"
+			}
+			readyCh <- ready{err: errors.New(msg)}
+		}()
+
+		select {
+		case r := <-readyCh:
+			if r.err != nil {
+				return mdLiveResultMsg{err: r.err}
+			}
+			return mdLiveResultMsg{url: r.url, browserErr: term.OpenBrowser(r.url)}
+		case <-time.After(5 * time.Second):
+			return mdLiveResultMsg{err: errors.New("md-to-pdf did not report ready within 5s")}
+		}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -460,6 +552,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.termStatus = "editor failed: " + msg.err.Error()
 		} else {
 			m.termStatus = "opened in editor"
+		}
+		return m, nil
+
+	case mdLiveResultMsg:
+		switch {
+		case msg.err != nil:
+			m.termStatus = "md-to-pdf failed: " + msg.err.Error()
+		case msg.browserErr != nil:
+			m.termStatus = "md-to-pdf live at " + msg.url + " (couldn't open browser: " + msg.browserErr.Error() + ")"
+		default:
+			m.termStatus = "opened in editor + md-to-pdf live at " + msg.url
 		}
 		return m, nil
 
@@ -654,6 +757,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := m.filtered[m.cursor]
 				m.termStatus = ""
 				return m, editorCmd(m.editor, p.Path)
+			}
+			return m, nil
+
+		case tea.KeyCtrlL:
+			if m.rightPaneMode == modeFiles && m.mdToPdfBin != "" &&
+				len(m.fileEntries) > 0 && m.fileCursor < len(m.fileEntries) {
+				fe := m.fileEntries[m.fileCursor]
+				if !fe.IsDir && strings.HasSuffix(strings.ToLower(fe.Name), ".md") {
+					filePath := filepath.Join(m.filesDir, fe.Name)
+					m.termStatus = ""
+					return m, tea.Batch(
+						editorFileCmd(m.editor, filePath),
+						mdLiveCmd(m.mdToPdfBin, filePath),
+					)
+				}
 			}
 			return m, nil
 
@@ -1121,6 +1239,12 @@ func (m Model) renderFilesContent() string {
 		return sb.String()
 	}
 
+	_, previewW := m.paneSizes()
+	nameW := previewW - 2 - 30 // subtract pane padding + fixed columns (size, mod time, git status)
+	if nameW < 10 {
+		nameW = 10
+	}
+
 	cursorStyle := m.styles.cursor
 	for i, fe := range m.fileEntries {
 		name := fe.Name
@@ -1137,7 +1261,7 @@ func (m Model) renderFilesContent() string {
 			gitStr = "  "
 		}
 
-		row := fmt.Sprintf(" %-30s %6s  %s  %s", truncate(name, 30), sizeStr, modStr, gitStr)
+		row := fmt.Sprintf(" %-*s %6s  %s  %s", nameW, truncate(name, nameW), sizeStr, modStr, gitStr)
 		switch {
 		case i == m.fileCursor:
 			sb.WriteString(cursorStyle.Render(row))
@@ -1250,6 +1374,9 @@ func (m Model) View() string {
 
 	// Help bar
 	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^t new tab · ^x explorer · ^r pull · ^f favorite · ^g favorites view · 1-9 highlight favorite (empty filter) · tab git/files · ^k new dir (files) · ? help · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
+	if m.mdToPdfBin != "" {
+		helpText += " · ^l md live preview (files, .md)"
+	}
 	if m.pulling {
 		helpText = "pulling…"
 	} else if m.pullStatus != "" {
@@ -1329,6 +1456,18 @@ func (m Model) renderHelpOverlay(background string) string {
 	type kb struct{ key, desc string }
 	row := func(key, desc string) kb { return kb{key, desc} }
 
+	rightPaneRows := []kb{
+		row("Tab", "Toggle between Git view and Files view"),
+		row("Ctrl+D / PgDn", "Scroll preview down"),
+		row("Ctrl+B / PgUp", "Scroll preview up"),
+		row("Ctrl+R", "git pull the highlighted repo"),
+		row("Ctrl+K", "Files view: create a new directory in the current folder"),
+	}
+	if m.mdToPdfBin != "" {
+		rightPaneRows = append(rightPaneRows, row("Ctrl+L",
+			"Files view: open highlighted .md file in editor + start md-to-pdf live preview"))
+	}
+
 	sections := []struct {
 		title string
 		keys  []kb
@@ -1352,13 +1491,7 @@ func (m Model) renderHelpOverlay(background string) string {
 			row("Ctrl+G", "Toggle favorites-only view"),
 			row("1 .. 9", "In favorites-only view with an empty filter: move cursor to the Nth favorite (then Enter/Ctrl+O/etc. to act on it)"),
 		}},
-		{"Right pane", []kb{
-			row("Tab", "Toggle between Git view and Files view"),
-			row("Ctrl+D / PgDn", "Scroll preview down"),
-			row("Ctrl+B / PgUp", "Scroll preview up"),
-			row("Ctrl+R", "git pull the highlighted repo"),
-			row("Ctrl+K", "Files view: create a new directory in the current folder"),
-		}},
+		{"Right pane", rightPaneRows},
 		{"Filter", []kb{
 			row("Type anything", "Filter projects (fuzzy)"),
 			row("Ctrl+U", "Clear filter"),

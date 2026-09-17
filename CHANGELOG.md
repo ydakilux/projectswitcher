@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Ctrl+L` in the files view, on a highlighted `.md` file: opens it in the
+  configured editor and runs `md-to-pdf serve <file>` in the background for
+  a live-reloading preview, parsing the server's own "ready" line for its
+  real listen URL and opening that URL in a browser via
+  `internal/term.OpenBrowser` (`explorer.exe` on WSL/Windows,
+  `xdg-open`/`open` elsewhere). Only active when the optional
+  [`md-to-pdf`](https://dev.azure.com/movu-robotics/Sandbox/_git/mdToPdfGenerator)
+  (`mdToPdfGenerator`) package resolves via `PW_MDTOPDF` or `md-to-pdf` on
+  `PATH` at startup; otherwise the shortcut is disabled and hidden from
+  help. The server keeps running detached after pw exits — pw does not
+  manage its lifecycle. Default port and conflict behavior are entirely
+  `md-to-pdf`'s own (commonly 4000); pw only reports what it observes.
+
+### Fixed
+
+- WSL: opening a URL for the live preview above no longer relies on
+  `md-to-pdf`'s own browser-open flag (which could fail silently without
+  `xdg-open`/`wslu` present); pw now launches the browser itself via
+  `explorer.exe`.
+- Files view: the filename column width is now computed dynamically from
+  the pane width instead of a fixed 30 characters, so long filenames are
+  truncated less aggressively on wide terminals and the size/date/git-status
+  columns stay aligned at narrow widths.
+
 ## [0.6.1] - 2026-09-10
 
 ### Added

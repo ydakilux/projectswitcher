@@ -50,6 +50,39 @@ func translatePathForExplorer(path string) (string, error) {
 	return "", errors.New("opening Explorer requires Windows or WSL")
 }
 
+// OpenBrowser opens url in the system's default browser, best-effort:
+//   - WSL (WSL_DISTRO_NAME set): runs `explorer.exe <url>` — Windows resolves
+//     http(s) URLs via explorer.exe the same way it resolves file paths,
+//     launching the default Windows browser. No wslpath translation is
+//     needed since url is already a URL, not a filesystem path. This is
+//     required on WSL images that lack xdg-open/wslu (common minimal
+//     installs), where the browser would otherwise not open at all.
+//   - Native Windows: `rundll32 url.dll,FileProtocolHandler <url>`.
+//   - Other (Linux/macOS): tries `xdg-open`, falling back to `open` (macOS).
+//
+// Like OpenExplorer, the launcher's own exit code is unreliable/irrelevant
+// here; only a failure to start the process at all is reported.
+func OpenBrowser(url string) error {
+	if os.Getenv("WSL_DISTRO_NAME") != "" {
+		if _, err := exec.LookPath("explorer.exe"); err != nil {
+			return errors.New("explorer.exe not found on PATH")
+		}
+		cmd := exec.Command("explorer.exe", url)
+		_ = cmd.Start() // explorer.exe's exit code is unreliable; ignore it.
+		return nil
+	}
+	if runtime.GOOS == "windows" {
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	}
+	if opener, err := exec.LookPath("xdg-open"); err == nil {
+		return exec.Command(opener, url).Start()
+	}
+	if opener, err := exec.LookPath("open"); err == nil {
+		return exec.Command(opener, url).Start()
+	}
+	return errors.New("no browser opener found on PATH (need explorer.exe, xdg-open, or open)")
+}
+
 // OpenNewTab opens a new Windows Terminal tab at path, attempting to match
 // the shell of the current session:
 //   - If running inside WSL (WSL_DISTRO_NAME set), opens a new tab running

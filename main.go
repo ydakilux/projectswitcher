@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -75,6 +76,17 @@ func main() {
 	}
 	if editor == "" {
 		editor = "code"
+	}
+
+	// Resolve md-to-pdf live-preview binary: PW_MDTOPDF env > "md-to-pdf" on
+	// PATH. Only enabled when found, since the mdToPdfGenerator package is
+	// optional (https://dev.azure.com/movu-robotics/Sandbox/_git/mdToPdfGenerator).
+	mdToPdfBin := os.Getenv("PW_MDTOPDF")
+	if mdToPdfBin == "" {
+		mdToPdfBin = "md-to-pdf"
+	}
+	if _, err := exec.LookPath(mdToPdfBin); err != nil {
+		mdToPdfBin = ""
 	}
 
 	// Resolve to absolute path
@@ -155,7 +167,7 @@ func main() {
 	}
 
 	renderer := lipgloss.NewRenderer(ttyOut)
-	model := ui.New(root, projects, store, renderer, version.Version, cwd, editor)
+	model := ui.New(root, projects, store, renderer, version.Version, cwd, editor, mdToPdfBin)
 
 	p := tea.NewProgram(
 		model,

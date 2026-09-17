@@ -93,6 +93,40 @@ via the `editor` field in `config.json`:
 
 **Precedence:** `PW_EDITOR` env var > `config.json` `editor` field > `code` (default).
 
+### Markdown live preview (`Ctrl+L`, files view only)
+
+If [`md-to-pdf`](https://dev.azure.com/movu-robotics/Sandbox/_git/mdToPdfGenerator)
+(the `mdToPdfGenerator` package) is found on `PATH` at startup (or via
+`PW_MDTOPDF`, see below), highlighting a `.md` file in the Files view (`Tab`
+to switch to it) and pressing `Ctrl+L`:
+
+1. Opens that file in the configured editor (same command as `Ctrl+E`, but
+   pointed at the single file).
+2. Runs `md-to-pdf serve <file>` in the background and waits (up to 5s) for
+   it to print its "server ready" line, from which pw parses the real
+   listen URL (whatever port it actually bound — `md-to-pdf`'s own
+   `--open` flag is intentionally **not** used, since it silently fails to
+   open a browser on some WSL setups without `xdg-open`/`wslu`).
+3. Once the URL is known, pw asks the OS to open it in a browser via
+   `explorer.exe` (WSL/native Windows) or `xdg-open`/`open` (Linux/macOS).
+
+pw stays open the whole time, no `cd`. The status/help bar reports one of:
+a startup/parse error from `md-to-pdf`, the resolved preview URL plus a
+browser-launch error if opening it failed, or the URL on apparent success.
+Note that "opened" only means the OS accepted the request to launch a
+browser (`explorer.exe`'s own exit code is unreliable and ignored) — pw
+cannot confirm a browser window actually appeared. The `md-to-pdf serve`
+process is left running detached in the background; pw does not track,
+stop, or otherwise manage its lifetime (it keeps running, on its bound
+port, after pw exits) — kill it manually if needed. If that port is
+already in use, `md-to-pdf` may fail to bind or bind to a different port;
+either way pw reports whatever `md-to-pdf` prints.
+
+This shortcut only applies to `.md` files and is hidden entirely (not shown
+in the help bar/popup) when `md-to-pdf` isn't found. Resolution order:
+`PW_MDTOPDF` env var (exact binary name/path) > `md-to-pdf` on `PATH`;
+if neither resolves via `PATH` lookup, the feature is silently disabled.
+
 ### New terminal tab (`Ctrl+T`)
 
 `Ctrl+T` opens a new [Windows Terminal](https://aka.ms/terminal) tab at the
@@ -142,6 +176,8 @@ Requires `explorer.exe` on `PATH`. Not supported outside Windows/WSL.
 | `Ctrl+D` / `PgDn` | Scroll preview down |
 | `Ctrl+B` / `PgUp` | Scroll preview up |
 | `Tab` | Toggle right pane between Git view and Files view |
+| `Ctrl+K` | Files view: create a new directory in the current folder |
+| `Ctrl+L` | Files view, `.md` file: open in editor + start `md-to-pdf` live preview (only if `md-to-pdf` is installed) |
 | `?` | Toggle full keybindings help popup |
 
 ## Favorites
