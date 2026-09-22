@@ -19,6 +19,12 @@ go build -o pw .
 cp pw /usr/local/bin/pw   # or anywhere on $PATH
 ```
 
+`make build` (and `make build-windows`) build a versioned binary: they pass
+the version from `git describe --tags --abbrev=0` to the build via
+`-ldflags -X pw/internal/version.Version=...`, falling back to the
+constant baked into `internal/version/version.go` if no git tag is found.
+A plain `go build -o pw .` always uses that baked-in constant.
+
 ## Shell Integration
 
 Source the appropriate file for your shell. Add to your shell config:
@@ -214,6 +220,18 @@ added/staged, red deleted, magenta conflict).
 | `←` (Left) | Go back up a directory (bounded to the project's root) |
 | `Ctrl+D` / `PgDn` | Scroll down |
 | `Ctrl+B` / `PgUp` | Scroll up |
+
+## Update check
+
+The bottom-right of the status/help bar shows the running version, e.g.
+`v0.6.1`. On startup, pw asynchronously checks GitHub for the latest
+released version of `ydakilux/projectswitcher` (3s timeout, never blocks
+the UI). If a newer version is available, the indicator becomes
+`v0.6.1 → v0.7.0`, with the new version accented, and stays that way for
+the rest of the session. Any failure (offline, rate-limited, etc.) is
+silently ignored — the indicator just shows the current version.
+
+Set `PW_NO_UPDATE_CHECK=1` to disable the check entirely.
 
 ## Notes
 

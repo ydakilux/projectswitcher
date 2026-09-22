@@ -23,6 +23,7 @@ import (
 	"pw/internal/project"
 	"pw/internal/state"
 	"pw/internal/term"
+	"pw/internal/version"
 )
 
 // styles holds all lipgloss styles bound to the real tty renderer.
@@ -39,6 +40,7 @@ type styles struct {
 	previewHead lipgloss.Style
 	sep         lipgloss.Style
 	paneBorder  lipgloss.Style
+	updateTag   lipgloss.Style
 	renderer    *lipgloss.Renderer
 }
 
@@ -59,6 +61,7 @@ func newStyles(r *lipgloss.Renderer) styles {
 		previewHead: r.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
 		sep:         r.NewStyle().Foreground(lipgloss.Color("8")),
 		paneBorder:  r.NewStyle().Border(lipgloss.NormalBorder(), false, true, false, false).BorderForeground(lipgloss.Color("8")),
+		updateTag:   r.NewStyle().Bold(true).Foreground(lipgloss.Color("13")),
 		renderer:    r,
 	}
 }
@@ -105,6 +108,14 @@ type editorResultMsg struct {
 	err error
 }
 
+// updateAvailableMsg is sent when the async GitHub "latest release" check
+// finds a newer version than the running build. latest is empty if no
+// update is available (or the check failed/was disabled) and, in that
+// case, the message can simply be ignored.
+type updateAvailableMsg struct {
+	latest string
+}
+
 // mdLiveResultMsg is sent when an async "launch md-to-pdf live preview"
 // attempt finishes: either the server failed to start (err set), or it
 // reported ready at url, optionally with a separate browserErr if the
@@ -146,6 +157,7 @@ type Model struct {
 	height        int
 	styles        styles
 	version       string
+	latestVersion string
 	pulling       bool
 	pullStatus    string
 	termStatus    string
@@ -246,7 +258,16 @@ func (m Model) descendToCwd(cwd string) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, m.loadPreviewCmd())
+	return tea.Batch(textinput.Blink, m.loadPreviewCmd(), checkUpdateCmd())
+}
+
+// checkUpdateCmd asynchronously checks GitHub for a newer release. It never
+// blocks startup and never errors out to the UI: failures simply result in
+// an updateAvailableMsg with an empty latest field.
+func checkUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		return updateAvailableMsg{latest: version.CheckLatest()}
+	}
 }
 
 // sortedProjects returns projects sorted by filter text or recency.
@@ -522,6 +543,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.previewVP.Height = m.height - 4 // minus header + filter + help
 		_ = listW
 		m.previewVP.SetContent(m.renderPreviewContent())
+		return m, nil
+
+	case updateAvailableMsg:
+		m.latestVersion = msg.latest
 		return m, nil
 
 	case previewLoadedMsg:
@@ -1399,6 +1424,9 @@ func (m Model) View() string {
 		helpText = m.termStatus
 	}
 	verText := "v" + m.version
+	if m.latestVersion != "" {
+		verText = "v" + m.version + " → v" + m.latestVersion
+	}
 	avail := m.width - len([]rune(verText)) - 1
 	if avail < 1 {
 		avail = 1
@@ -1407,7 +1435,11 @@ func (m Model) View() string {
 	pad := m.width - len([]rune(helpText)) - len([]rune(verText)) - 1
 	var help string
 	if pad > 0 {
-		help = m.styles.help.Render(helpText + strings.Repeat(" ", pad) + verText)
+		verRendered := m.styles.help.Render(verText)
+		if m.latestVersion != "" {
+			verRendered = m.styles.help.Render("v"+m.version+" → ") + m.styles.updateTag.Render("v"+m.latestVersion)
+		}
+		help = m.styles.help.Render(helpText+strings.Repeat(" ", pad)) + verRendered
 	} else {
 		help = m.styles.help.Render(helpText)
 	}

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Automatic update check on startup: pw asynchronously queries GitHub's
+  latest-release API for `ydakilux/projectswitcher` (3s timeout) and
+  compares it against the running build's semver. The check never blocks
+  startup and silently ignores all failures (offline, rate-limited, etc.).
+  When a newer version is found, the footer's version indicator becomes
+  `v0.6.1 → v0.7.0`, with the new version accented. Opt out entirely via
+  the `PW_NO_UPDATE_CHECK=1` environment variable.
+- Build-time version injection: `make build` and `make build-windows` now
+  pass `-ldflags -X pw/internal/version.Version=...` with the version
+  resolved from `git describe --tags --abbrev=0` (stripping the leading
+  `v`), falling back to the baked-in constant in
+  `internal/version/version.go` when no tag is available. That file
+  remains the semver source of truth.
 - `Ctrl+L` in the files view, on a highlighted `.md` file: opens it in the
   configured editor and runs `md-to-pdf serve <file>` in the background for
   a live-reloading preview, parsing the server's own "ready" line for its

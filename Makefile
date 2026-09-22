@@ -2,6 +2,17 @@
 
 .PHONY: help build install build-windows test clean
 
+# Semver source of truth: try to pick it up from the nearest git tag
+# (stripping a leading "v"), falling back to the baked-in constant in
+# internal/version/version.go if git/tags are unavailable (e.g. tarball
+# builds). Override on the command line with `make build VERSION=1.2.3`.
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+ifeq ($(strip $(VERSION)),)
+LDFLAGS :=
+else
+LDFLAGS := -ldflags "-X pw/internal/version.Version=$(VERSION)"
+endif
+
 # Detect Windows so targets work whether make is invoked from Git Bash/WSL
 # (where SHELL is sh/bash) or from a native Windows make (cmd.exe as SHELL).
 ifeq ($(OS),Windows_NT)
@@ -37,9 +48,9 @@ endif
 
 build: ## Build pw binary for current OS/arch
 ifeq ($(OS),Windows_NT)
-	cmd /c go build -o pw$(EXE) .
+	cmd /c go build $(LDFLAGS) -o pw$(EXE) .
 else
-	go build -o pw$(EXE) .
+	go build $(LDFLAGS) -o pw$(EXE) .
 endif
 
 install: build ## Build and install (Windows: runs install.ps1; else: hooks POSIX shell rc files)
@@ -81,9 +92,9 @@ endif
 
 build-windows: ## Cross-compile pw.exe for Windows (amd64)
 ifeq ($(OS),Windows_NT)
-	cmd /c set GOOS=windows&& set GOARCH=amd64&& go build -o pw.exe .
+	cmd /c set GOOS=windows&& set GOARCH=amd64&& go build $(LDFLAGS) -o pw.exe .
 else
-	GOOS=windows GOARCH=amd64 go build -o pw.exe .
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o pw.exe .
 endif
 
 test: ## Run all tests
