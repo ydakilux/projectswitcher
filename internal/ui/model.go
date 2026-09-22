@@ -173,6 +173,7 @@ type Model struct {
 	showHelp      bool     // whether the full-keybindings help popup is shown
 	helpScroll    int      // scroll offset within the help popup (only used if content overflows)
 	showUpdate    bool     // whether the "update available" popup is shown
+	updateChecked bool     // whether the async update check has responded yet
 	// new-directory prompt state (files pane, "N" shortcut)
 	newDirModal bool
 	newDirInput textinput.Model
@@ -551,6 +552,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateAvailableMsg:
 		m.latestVersion = msg.latest
+		m.updateChecked = true
 		return m, nil
 
 	case previewLoadedMsg:
@@ -647,7 +649,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.showUpdate {
-			// Any key closes the update popup (including Ctrl+A again).
+			// Any key closes the update popup (including F2 again).
 			m.showUpdate = false
 			return m, nil
 		}
@@ -676,7 +678,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.helpScroll = 0
 			return m, nil
 		}
-		if msg.Type == tea.KeyCtrlA && m.latestVersion != "" {
+		// F2 always opens the version/update popup (before the filter
+		// textinput gets a chance to see the message — textinput doesn't
+		// bind F-keys, but keep this ahead of it regardless so nothing can
+		// ever swallow it, unlike Ctrl-key bindings which textinput can
+		// intercept for its own line-editing shortcuts).
+		if msg.Type == tea.KeyF2 {
 			m.showUpdate = true
 			return m, nil
 		}
@@ -1584,7 +1591,7 @@ func (m Model) View() string {
 	// dropped (never cut mid-word) and a trailing "…" marks any drop.
 	segs := []string{"? help"}
 	if m.latestVersion != "" {
-		segs = append(segs, "^a update")
+		segs = append(segs, "F2 update available")
 	}
 	segs = append(segs,
 		"↑↓ move", "→ open", "← back", "↵ switch",
@@ -1601,6 +1608,11 @@ func (m Model) View() string {
 	)
 	if m.mdToPdfBin != "" {
 		segs = append(segs, "^l md preview")
+	}
+	if m.latestVersion == "" {
+		// Low priority when there's nothing to act on — always shown, but
+		// the first thing to get dropped on a narrow terminal.
+		segs = append(segs, "F2 version")
 	}
 	helpText := buildHelpBar(segs, m.width)
 	if m.pulling {
@@ -1723,11 +1735,8 @@ func (m Model) helpOverlayLayout() (lines []string, availContentH int) {
 		}},
 		{"Misc", []kb{
 			row("?", "Toggle this help popup"),
+			row("F2", "Version / update details"),
 		}},
-	}
-	if m.latestVersion != "" {
-		misc := &sections[len(sections)-1]
-		misc.keys = append(misc.keys, row("Ctrl+A", "Show update details"))
 	}
 
 	// Key column width: longest key label, capped so descriptions keep
@@ -1841,9 +1850,11 @@ func (m Model) renderHelpOverlay(background string) string {
 		lipgloss.WithWhitespaceChars(" "), lipgloss.WithWhitespaceForeground(lipgloss.Color("0")))
 }
 
-// renderUpdateOverlay draws a bordered "update available" popup, centered
-// over the given background content. It's dismissed by Esc, Ctrl+A, or any
-// other key (see the KeyMsg handling in Update()).
+// renderUpdateOverlay draws a bordered "Version"/"Update available" popup,
+// centered over the given background content. Content depends on whether
+// the async startup update check has responded yet and whether it found a
+// newer release. It's dismissed by Esc, F2, or any other key (see the
+// KeyMsg handling in Update()).
 func (m Model) renderUpdateOverlay(background string) string {
 	r := m.styles.renderer
 	titleStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
@@ -1851,23 +1862,44 @@ func (m Model) renderUpdateOverlay(background string) string {
 	newVerStyle := m.styles.updateTag
 	codeStyle := r.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("236")).Padding(0, 1)
 	linkStyle := r.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
+	hintStyle := m.styles.sep
 
 	contentW := m.overlayContentWidth(56)
+	hasUpdate := m.latestVersion != ""
+
+	var title, statusLine, cmdHeading string
+	switch {
+	case hasUpdate:
+		title = "Update available"
+		statusLine = verStyle.Render("v"+m.version) + hintStyle.Render(" → ") + newVerStyle.Render("v"+m.latestVersion)
+		cmdHeading = "Run this to update:"
+	case m.updateChecked:
+		title = "Version"
+		statusLine = verStyle.Render("v"+m.version) + hintStyle.Render(" — up to date")
+		cmdHeading = "Update commands (for reference):"
+	default:
+		title = "Version"
+		statusLine = verStyle.Render("v"+m.version) + hintStyle.Render(" — checking for updates…")
+		cmdHeading = "Update commands (for reference):"
+	}
 
 	lines := []string{
-		titleStyle.Render("Update available"),
+		titleStyle.Render(title),
 		"",
-		verStyle.Render("v"+m.version) + m.styles.sep.Render(" → ") + newVerStyle.Render("v"+m.latestVersion),
+		statusLine,
 		"",
-		m.styles.sep.Render("Run this to update:"),
+		hintStyle.Render(cmdHeading),
 		"",
 		codeStyle.Render(truncate("cd /path/to/projectswitcher", contentW-2)),
 		codeStyle.Render(truncate("git pull && make install", contentW-2)),
 		"",
-		m.styles.sep.Render("Release notes: ") + linkStyle.Render(truncate("https://github.com/ydakilux/projectswitcher/releases", contentW-16)),
-		"",
-		m.styles.sep.Render("esc to close"),
+		hintStyle.Render("Release notes: ") + linkStyle.Render(truncate("https://github.com/ydakilux/projectswitcher/releases", contentW-16)),
 	}
+	if !hasUpdate {
+		lines = append(lines, "",
+			hintStyle.Render(truncate("Checked at startup. Disable with PW_NO_UPDATE_CHECK=1.", contentW)))
+	}
+	lines = append(lines, "", hintStyle.Render("esc to close"))
 	lines = m.clampOverlayHeight(lines)
 
 	box := r.NewStyle().

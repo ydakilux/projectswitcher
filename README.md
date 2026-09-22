@@ -165,8 +165,9 @@ The bottom status/help bar is adaptive: shortcuts are packed in by priority
 only as far as they fit the terminal width, whole segments are dropped
 (never cut mid-word), and a trailing `…` marks truncation. `? help` always
 comes first so the full keybindings popup stays discoverable even on a
-narrow terminal, followed by `^a update` whenever a newer version is
-available.
+narrow terminal. `F2 update available` follows right after it when a
+newer version is available; otherwise a low-priority `F2 version` segment
+is shown instead.
 
 | Key | Action |
 |-----|--------|
@@ -191,7 +192,7 @@ available.
 | `Tab` | Toggle right pane between Git view and Files view |
 | `Ctrl+K` | Files view: create a new directory in the current folder |
 | `Ctrl+L` | Files view, `.md` file: open in editor + start `md-to-pdf` live preview (only if `md-to-pdf` is installed) |
-| `Ctrl+A` | Open the "Update available" modal (only shown/active when a newer release was detected) |
+| `F2` | Open the "Version" / "Update available" modal (always available) |
 | `?` | Toggle full keybindings help popup |
 
 ## Favorites
@@ -238,12 +239,16 @@ Any failure (offline, rate-limited, etc.) is silently ignored.
 If a newer version is available, a passive indicator appears right-aligned
 on the Git/Files tab line (styled in the same blue as the path breadcrumb):
 `v0.6.1 → v0.7.0`. It stays visible for the rest of the session. Press
-`Ctrl+A` to open a dismissible "Update available" modal with the current →
-new version, the commands to update (`cd /path/to/projectswitcher` then
-`git pull && make install`), and a link to the
-[releases page](https://github.com/ydakilux/projectswitcher/releases).
-Dismiss it with `Esc` or any other key. `Ctrl+A` only does anything (and
-only shows up in the help bar/popup) when an update was actually detected.
+`F2` at any time to open a dismissible "Version" modal — it shows the
+current version and either an "up to date" state, a "checking…" state
+(before the startup check has responded), or, if a newer release was
+found, the current → new version plus the commands to update
+(`cd /path/to/projectswitcher` then `git pull && make install`) and a link
+to the [releases page](https://github.com/ydakilux/projectswitcher/releases).
+Dismiss it with `Esc` or any other key. `F2` always works and always shows
+up in the help bar/popup — it's on the low-priority end of the adaptive
+help bar until an update is actually detected, at which point it jumps to
+high priority as `F2 update available`.
 
 All popups (keybindings help, update available, new-directory prompt) size
 themselves from the current terminal dimensions and always stay inside the

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-22
+
+### Changed
+
+- The "Version / update available" popup is now opened with `F2` instead
+  of `Ctrl+A`. `bubbles/textinput` binds `Ctrl+A` itself (move to start of
+  line) and was swallowing the key before pw ever saw it. The binding is
+  also no longer hidden/inert when the build is up to date: `F2` always
+  opens the popup, showing an "up to date" (or "checking…" before the
+  startup check responds) state with the version, reference update
+  commands, and the releases link. The help bar segment and keybindings
+  popup row are shown unconditionally now too; `F2 update available`
+  keeps its high priority in the help bar only when a newer release was
+  actually found.
+
 ## [0.7.2] - 2026-09-22
 
 ### Changed
@@ -284,7 +299,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell integration for bash, zsh, fish, and PowerShell.
 - Windows support (cross-compiled `pw.exe`, PowerShell wrapper).
 
-[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/ydakilux/projectswitcher/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/ydakilux/projectswitcher/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/ydakilux/projectswitcher/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/ydakilux/projectswitcher/compare/v0.6.1...v0.7.0
