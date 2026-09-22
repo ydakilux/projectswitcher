@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Project list ordering is now deterministic. Favorites (and same-named
+  projects) previously relied on `sort.Slice`, which is not stable, so
+  entries sharing a case-insensitive name were left in Go's randomized
+  map-iteration order. This made favorites appear to "jump" / reorder
+  between renders and navigations while scrolling a long list. All
+  alphabetical comparators now break ties on the exact project path via a
+  shared `projectLess` helper, and regression tests assert the order is
+  stable across map permutations.
 - WSL: opening a URL for the live preview above no longer relies on
   `md-to-pdf`'s own browser-open flag (which could fail silently without
   `xdg-open`/`wslu` present); pw now launches the browser itself via

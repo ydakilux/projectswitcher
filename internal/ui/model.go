@@ -264,7 +264,7 @@ func (m Model) sortedProjects(filter string) []project.Project {
 		projects := make([]project.Project, len(source))
 		copy(projects, source)
 		sort.Slice(projects, func(i, j int) bool {
-			return strings.ToLower(projects[i].Name) < strings.ToLower(projects[j].Name)
+			return projectLess(projects[i], projects[j])
 		})
 		base = projects
 	} else {
@@ -292,9 +292,23 @@ func (m Model) sortedProjects(filter string) []project.Project {
 		}
 	}
 	sort.Slice(favs, func(i, j int) bool {
-		return strings.ToLower(favs[i].Name) < strings.ToLower(favs[j].Name)
+		return projectLess(favs[i], favs[j])
 	})
 	return append(favs, rest...)
+}
+
+// projectLess is the canonical alphabetical ordering for projects. It breaks
+// ties on the exact (case-sensitive) Path so ordering is deterministic even
+// when two distinct projects share a lowercase Name. Without this tiebreaker
+// sort.Slice leaves equal-name entries in their (map-iteration) input order,
+// which shuffles favorites between renders/navigations and makes the list
+// appear to "jump" / reorder.
+func projectLess(a, b project.Project) bool {
+	an, bn := strings.ToLower(a.Name), strings.ToLower(b.Name)
+	if an != bn {
+		return an < bn
+	}
+	return a.Path < b.Path
 }
 
 // fallbackProject constructs a minimal project.Project for a favorited path
@@ -335,7 +349,7 @@ func (m Model) favoritesSorted() []project.Project {
 		}
 	}
 	sort.Slice(favs, func(i, j int) bool {
-		return strings.ToLower(favs[i].Name) < strings.ToLower(favs[j].Name)
+		return projectLess(favs[i], favs[j])
 	})
 	return favs
 }
