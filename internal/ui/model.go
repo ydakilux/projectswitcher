@@ -41,6 +41,7 @@ type styles struct {
 	sep         lipgloss.Style
 	paneBorder  lipgloss.Style
 	updateTag   lipgloss.Style
+	version     lipgloss.Style
 	renderer    *lipgloss.Renderer
 }
 
@@ -61,7 +62,8 @@ func newStyles(r *lipgloss.Renderer) styles {
 		previewHead: r.NewStyle().Bold(true).Foreground(lipgloss.Color("12")),
 		sep:         r.NewStyle().Foreground(lipgloss.Color("8")),
 		paneBorder:  r.NewStyle().Border(lipgloss.NormalBorder(), false, true, false, false).BorderForeground(lipgloss.Color("8")),
-		updateTag:   r.NewStyle().Bold(true).Foreground(lipgloss.Color("13")),
+		updateTag:   r.NewStyle().Bold(true).Foreground(lipgloss.Color("141")),
+		version:     r.NewStyle().Foreground(lipgloss.Color("12")),
 		renderer:    r,
 	}
 }
@@ -169,6 +171,7 @@ type Model struct {
 	fileCursor    int
 	fileNavStack  []string // dir history for going back in files view
 	showHelp      bool     // whether the full-keybindings help popup is shown
+	showUpdate    bool     // whether the "update available" popup is shown
 	// new-directory prompt state (files pane, "N" shortcut)
 	newDirModal bool
 	newDirInput textinput.Model
@@ -642,6 +645,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
+		if m.showUpdate {
+			// Any key closes the update popup (including Ctrl+V again).
+			m.showUpdate = false
+			return m, nil
+		}
 		if m.showHelp {
 			// Any key closes the help popup.
 			m.showHelp = false
@@ -649,6 +657,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.String() == "?" {
 			m.showHelp = true
+			return m, nil
+		}
+		if msg.Type == tea.KeyCtrlV && m.latestVersion != "" {
+			m.showUpdate = true
 			return m, nil
 		}
 		if msg.Type == tea.KeyCtrlK && m.rightPaneMode == modeFiles {
@@ -1243,7 +1255,10 @@ func (m *Model) scrollFilesCursorIntoView() {
 	}
 }
 
-// renderModeHeader renders the tab bar for the right pane.
+// renderModeHeader renders the tab bar for the right pane, with the app
+// version right-aligned to the pane's available content width. The version
+// is dropped (never wrapped/truncated over the tabs) if there isn't enough
+// room to show it alongside the tabs.
 func (m Model) renderModeHeader() string {
 	activeStyle := m.styles.renderer.NewStyle().Bold(true).Reverse(true).Padding(0, 1)
 	inactiveStyle := m.styles.renderer.NewStyle().Padding(0, 1)
@@ -1255,7 +1270,30 @@ func (m Model) renderModeHeader() string {
 		gitTab = inactiveStyle.Render("Git")
 		filesTab = activeStyle.Render("Files")
 	}
-	return gitTab + " " + filesTab + m.styles.sep.Render("  (tab to switch)")
+	tabs := gitTab + " " + filesTab + m.styles.sep.Render("  (tab to switch)")
+
+	_, previewW := m.paneSizes()
+	contentW := previewW - 2 // matches the Width(previewW-2) the right pane is rendered at
+	if contentW <= 0 {
+		return tabs
+	}
+
+	verText := "v" + m.version
+	verRendered := m.styles.version.Render(truncate(verText, contentW))
+	if m.latestVersion != "" {
+		full := verText + " → v" + m.latestVersion
+		if len([]rune(full)) <= contentW {
+			verRendered = m.styles.version.Render(verText+" → ") + m.styles.updateTag.Render("v"+m.latestVersion)
+		}
+	}
+
+	gap := contentW - lipgloss.Width(tabs) - lipgloss.Width(verRendered)
+	if gap < 1 {
+		// Not enough room to show the version without crowding/wrapping the
+		// tabs — drop it rather than risk breaking the layout.
+		return tabs
+	}
+	return tabs + strings.Repeat(" ", gap) + verRendered
 }
 
 // renderFilesContent builds the file explorer right pane content.
@@ -1416,6 +1454,9 @@ func (m Model) View() string {
 	if m.mdToPdfBin != "" {
 		helpText += " · ^l md live preview (files, .md)"
 	}
+	if m.latestVersion != "" {
+		helpText += " · ^v update available"
+	}
 	if m.pulling {
 		helpText = "pulling…"
 	} else if m.pullStatus != "" {
@@ -1423,29 +1464,10 @@ func (m Model) View() string {
 	} else if m.termStatus != "" {
 		helpText = m.termStatus
 	}
-	verText := "v" + m.version
-	if m.latestVersion != "" {
-		verText = "v" + m.version + " → v" + m.latestVersion
+	if m.width > 0 {
+		helpText = truncate(helpText, m.width)
 	}
-	avail := m.width - len([]rune(verText)) - 2
-	if avail < 1 {
-		avail = 1
-	}
-	helpText = truncate(helpText, avail)
-	pad := m.width - len([]rune(helpText)) - len([]rune(verText)) - 1
-	if pad < 1 && m.width > len([]rune(verText))+1 {
-		pad = 1
-	}
-	var help string
-	if pad > 0 {
-		verRendered := m.styles.help.Render(verText)
-		if m.latestVersion != "" {
-			verRendered = m.styles.help.Render("v"+m.version+" → ") + m.styles.updateTag.Render("v"+m.latestVersion)
-		}
-		help = m.styles.help.Render(helpText+strings.Repeat(" ", pad)) + verRendered
-	} else {
-		help = m.styles.help.Render(helpText)
-	}
+	help := m.styles.help.Render(helpText)
 
 	// Build panes — use renderer-bound styles for layout too
 	leftPane := m.styles.paneBorder.Width(listW).Render(listContent)
@@ -1460,6 +1482,9 @@ func (m Model) View() string {
 	}
 	if m.showHelp {
 		return m.renderHelpOverlay(full)
+	}
+	if m.showUpdate {
+		return m.renderUpdateOverlay(full)
 	}
 	return full
 }
@@ -1549,6 +1574,10 @@ func (m Model) renderHelpOverlay(background string) string {
 			row("?", "Toggle this help popup"),
 		}},
 	}
+	if m.latestVersion != "" {
+		misc := &sections[len(sections)-1]
+		misc.keys = append(misc.keys, row("Ctrl+V", "Show update available details"))
+	}
 
 	var sb strings.Builder
 	sb.WriteString(titleStyle.Render("Keybindings"))
@@ -1570,6 +1599,52 @@ func (m Model) renderHelpOverlay(background string) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("12")).
 		Padding(1, 2).
+		Render(sb.String())
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
+		lipgloss.WithWhitespaceChars(" "), lipgloss.WithWhitespaceForeground(lipgloss.Color("0")))
+}
+
+// renderUpdateOverlay draws a bordered "update available" popup, centered
+// over the given background content. It's dismissed by Esc, Ctrl+V, or any
+// other key (see the KeyMsg handling in Update()).
+func (m Model) renderUpdateOverlay(background string) string {
+	r := m.styles.renderer
+	titleStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	verStyle := m.styles.version
+	newVerStyle := m.styles.updateTag
+	codeStyle := r.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("236")).Padding(0, 1)
+	linkStyle := r.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
+
+	var sb strings.Builder
+	sb.WriteString(titleStyle.Render("Update available"))
+	sb.WriteString("\n\n")
+	sb.WriteString(verStyle.Render("v"+m.version) + m.styles.sep.Render(" → ") + newVerStyle.Render("v"+m.latestVersion))
+	sb.WriteString("\n\n")
+	sb.WriteString(m.styles.sep.Render("Run this to update:"))
+	sb.WriteString("\n\n")
+	sb.WriteString(codeStyle.Render("cd /path/to/projectswitcher") + "\n")
+	sb.WriteString(codeStyle.Render("git pull && make install"))
+	sb.WriteString("\n\n")
+	sb.WriteString(m.styles.sep.Render("Release notes: ") + linkStyle.Render("https://github.com/ydakilux/projectswitcher/releases"))
+	sb.WriteString("\n\n")
+	sb.WriteString(m.styles.sep.Render("esc to close"))
+
+	// Keep the box comfortably narrower than very small terminals so it
+	// never forces wrapping or overflows the placed area.
+	boxW := 56
+	if m.width > 0 && m.width-4 < boxW {
+		boxW = m.width - 4
+	}
+	if boxW < 20 {
+		boxW = 20
+	}
+
+	box := r.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("12")).
+		Padding(1, 2).
+		Width(boxW).
 		Render(sb.String())
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,

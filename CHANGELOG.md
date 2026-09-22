@@ -7,15 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-22
+
 ### Added
 
+- `Ctrl+V` opens a dismissible "Update available" modal (only when a newer
+  release was actually detected) showing the current → new version, the
+  update commands (`cd /path/to/projectswitcher` then `git pull && make
+  install`), and a link to
+  https://github.com/ydakilux/projectswitcher/releases. Dismiss with `Esc`
+  or any other key. The binding is inert and hidden from the help bar/help
+  popup when no update is available.
+- The passive update indicator has moved from the bottom help bar to the
+  right side of the Git/Files tab line, styled in the same blue as the
+  path breadcrumb; it shows `v0.6.1 → v0.7.0` when a newer release exists.
 - Automatic update check on startup: pw asynchronously queries GitHub's
   latest-release API for `ydakilux/projectswitcher` (3s timeout) and
   compares it against the running build's semver. The check never blocks
   startup and silently ignores all failures (offline, rate-limited, etc.).
-  When a newer version is found, the footer's version indicator becomes
-  `v0.6.1 → v0.7.0`, with the new version accented. Opt out entirely via
-  the `PW_NO_UPDATE_CHECK=1` environment variable.
+  Opt out entirely via the `PW_NO_UPDATE_CHECK=1` environment variable.
 - Build-time version injection: `make build` and `make build-windows` now
   pass `-ldflags -X pw/internal/version.Version=...` with the version
   resolved from `git describe --tags --abbrev=0` (stripping the leading
@@ -37,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Footer version indicator was previously dropped entirely when the help
+  text filled the terminal width (no room left to pad it in); it now
+  lives on the tab line instead, independent of help-bar width.
 - Project list ordering is now deterministic. Favorites (and same-named
   projects) previously relied on `sort.Slice`, which is not stable, so
   entries sharing a case-insensitive name were left in Go's randomized
@@ -241,7 +254,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell integration for bash, zsh, fish, and PowerShell.
 - Windows support (cross-compiled `pw.exe`, PowerShell wrapper).
 
-[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ydakilux/projectswitcher/compare/v0.6.1...v0.7.0
 [0.5.1]: https://github.com/ydakilux/projectswitcher/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ydakilux/projectswitcher/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ydakilux/projectswitcher/compare/v0.3.1...v0.4.0

@@ -184,6 +184,7 @@ Requires `explorer.exe` on `PATH`. Not supported outside Windows/WSL.
 | `Tab` | Toggle right pane between Git view and Files view |
 | `Ctrl+K` | Files view: create a new directory in the current folder |
 | `Ctrl+L` | Files view, `.md` file: open in editor + start `md-to-pdf` live preview (only if `md-to-pdf` is installed) |
+| `Ctrl+V` | Open the "Update available" modal (only shown/active when a newer release was detected) |
 | `?` | Toggle full keybindings help popup |
 
 ## Favorites
@@ -223,13 +224,19 @@ added/staged, red deleted, magenta conflict).
 
 ## Update check
 
-The bottom-right of the status/help bar shows the running version, e.g.
-`v0.6.1`. On startup, pw asynchronously checks GitHub for the latest
-released version of `ydakilux/projectswitcher` (3s timeout, never blocks
-the UI). If a newer version is available, the indicator becomes
-`v0.6.1 → v0.7.0`, with the new version accented, and stays that way for
-the rest of the session. Any failure (offline, rate-limited, etc.) is
-silently ignored — the indicator just shows the current version.
+On startup, pw asynchronously checks GitHub for the latest released
+version of `ydakilux/projectswitcher` (3s timeout, never blocks the UI).
+Any failure (offline, rate-limited, etc.) is silently ignored.
+
+If a newer version is available, a passive indicator appears right-aligned
+on the Git/Files tab line (styled in the same blue as the path breadcrumb):
+`v0.6.1 → v0.7.0`. It stays visible for the rest of the session. Press
+`Ctrl+V` to open a dismissible "Update available" modal with the current →
+new version, the commands to update (`cd /path/to/projectswitcher` then
+`git pull && make install`), and a link to the
+[releases page](https://github.com/ydakilux/projectswitcher/releases).
+Dismiss it with `Esc` or any other key. `Ctrl+V` only does anything (and
+only shows up in the help bar/popup) when an update was actually detected.
 
 Set `PW_NO_UPDATE_CHECK=1` to disable the check entirely.
 
