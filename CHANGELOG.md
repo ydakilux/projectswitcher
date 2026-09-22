@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-09-22
+
+### Changed
+
+- The "update available" popup is now opened with `Ctrl+A` instead of
+  `Ctrl+V`. Windows Terminal (and most terminals) intercept `Ctrl+V` as
+  paste, so the binding never reached pw. The help bar segment and
+  keybindings popup row were updated accordingly, and the binding stays
+  inert/hidden unless a newer release was detected.
+
 ## [0.7.1] - 2026-09-22
 
 ### Changed
@@ -274,7 +284,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell integration for bash, zsh, fish, and PowerShell.
 - Windows support (cross-compiled `pw.exe`, PowerShell wrapper).
 
-[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/ydakilux/projectswitcher/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/ydakilux/projectswitcher/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/ydakilux/projectswitcher/compare/v0.6.1...v0.7.0
 [0.5.1]: https://github.com/ydakilux/projectswitcher/compare/v0.5.0...v0.5.1

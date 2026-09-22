@@ -647,7 +647,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.showUpdate {
-			// Any key closes the update popup (including Ctrl+V again).
+			// Any key closes the update popup (including Ctrl+A again).
 			m.showUpdate = false
 			return m, nil
 		}
@@ -676,7 +676,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.helpScroll = 0
 			return m, nil
 		}
-		if msg.Type == tea.KeyCtrlV && m.latestVersion != "" {
+		if msg.Type == tea.KeyCtrlA && m.latestVersion != "" {
 			m.showUpdate = true
 			return m, nil
 		}
@@ -1584,7 +1584,7 @@ func (m Model) View() string {
 	// dropped (never cut mid-word) and a trailing "…" marks any drop.
 	segs := []string{"? help"}
 	if m.latestVersion != "" {
-		segs = append(segs, "^v update")
+		segs = append(segs, "^a update")
 	}
 	segs = append(segs,
 		"↑↓ move", "→ open", "← back", "↵ switch",
@@ -1727,7 +1727,7 @@ func (m Model) helpOverlayLayout() (lines []string, availContentH int) {
 	}
 	if m.latestVersion != "" {
 		misc := &sections[len(sections)-1]
-		misc.keys = append(misc.keys, row("Ctrl+V", "Show update details"))
+		misc.keys = append(misc.keys, row("Ctrl+A", "Show update details"))
 	}
 
 	// Key column width: longest key label, capped so descriptions keep
@@ -1842,7 +1842,7 @@ func (m Model) renderHelpOverlay(background string) string {
 }
 
 // renderUpdateOverlay draws a bordered "update available" popup, centered
-// over the given background content. It's dismissed by Esc, Ctrl+V, or any
+// over the given background content. It's dismissed by Esc, Ctrl+A, or any
 // other key (see the KeyMsg handling in Update()).
 func (m Model) renderUpdateOverlay(background string) string {
 	r := m.styles.renderer
