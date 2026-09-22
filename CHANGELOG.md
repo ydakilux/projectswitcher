@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-22
+
+### Changed
+
+- Bottom help bar is now adaptive: shortcuts are added by priority only
+  while they fit the terminal width, whole segments are dropped rather
+  than cut mid-word, and a trailing `…` marks truncation. `? help` is now
+  the first segment so the full keybindings popup is always discoverable;
+  `^v update` follows right after it when an update is available.
+- Help/update/new-directory popups now size themselves from the terminal
+  dimensions and always stay inside the app frame.
+
+### Fixed
+
+- Keybindings popup no longer cuts descriptions mid-sentence: the
+  description column is derived from the actual popup width and wraps
+  onto indented continuation lines. When content is too tall it compacts
+  blank separators first, and only falls back to a scrollable popup
+  (`↑↓ scroll`) if it still doesn't fit.
+
 ## [0.7.0] - 2026-09-22
 
 ### Added
@@ -254,7 +274,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shell integration for bash, zsh, fish, and PowerShell.
 - Windows support (cross-compiled `pw.exe`, PowerShell wrapper).
 
-[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/ydakilux/projectswitcher/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/ydakilux/projectswitcher/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/ydakilux/projectswitcher/compare/v0.6.1...v0.7.0
 [0.5.1]: https://github.com/ydakilux/projectswitcher/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ydakilux/projectswitcher/compare/v0.4.0...v0.5.0

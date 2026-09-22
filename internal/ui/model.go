@@ -171,6 +171,7 @@ type Model struct {
 	fileCursor    int
 	fileNavStack  []string // dir history for going back in files view
 	showHelp      bool     // whether the full-keybindings help popup is shown
+	helpScroll    int      // scroll offset within the help popup (only used if content overflows)
 	showUpdate    bool     // whether the "update available" popup is shown
 	// new-directory prompt state (files pane, "N" shortcut)
 	newDirModal bool
@@ -651,12 +652,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.showHelp {
-			// Any key closes the help popup.
+			if msg.Type == tea.KeyUp || msg.Type == tea.KeyDown {
+				lines, availH := m.helpOverlayLayout()
+				if len(lines) > availH {
+					maxOffset := len(lines) - availH
+					if msg.Type == tea.KeyUp {
+						if m.helpScroll > 0 {
+							m.helpScroll--
+						}
+					} else if m.helpScroll < maxOffset {
+						m.helpScroll++
+					}
+					return m, nil
+				}
+			}
+			// Any other key closes the help popup.
 			m.showHelp = false
+			m.helpScroll = 0
 			return m, nil
 		}
 		if msg.String() == "?" {
 			m.showHelp = true
+			m.helpScroll = 0
 			return m, nil
 		}
 		if msg.Type == tea.KeyCtrlV && m.latestVersion != "" {
@@ -986,6 +1003,119 @@ func truncate(s string, maxW int) string {
 		return "…"
 	}
 	return string(runes[:maxW-1]) + "…"
+}
+
+// buildHelpBar joins segs (already ordered by priority, most useful first)
+// with " · ", including only as many whole segments as fit within maxW.
+// Segments are never cut mid-word — if any had to be dropped, a trailing
+// "…" marks the truncation. maxW <= 0 (size unknown yet) returns everything.
+func buildHelpBar(segs []string, maxW int) string {
+	const sep = " · "
+	full := strings.Join(segs, sep)
+	if maxW <= 0 || len([]rune(full)) <= maxW {
+		return full
+	}
+	avail := maxW - 1 // reserve room for the trailing "…"
+	var used []string
+	curLen := 0
+	for _, s := range segs {
+		add := len([]rune(s))
+		if len(used) > 0 {
+			add += len(sep)
+		}
+		if curLen+add > avail {
+			break
+		}
+		used = append(used, s)
+		curLen += add
+	}
+	if len(used) == 0 {
+		return truncate(segs[0], maxW)
+	}
+	return strings.Join(used, sep) + "…"
+}
+
+// wrapWords greedily word-wraps s into lines no wider than width runes,
+// breaking only at spaces (never mid-word). Individual words longer than
+// width are hard-truncated as a last resort. Always returns at least one
+// line (possibly empty).
+func wrapWords(s string, width int) []string {
+	if width < 1 {
+		width = 1
+	}
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	lines := make([]string, 0, 2)
+	cur := words[0]
+	for _, w := range words[1:] {
+		if len([]rune(cur))+1+len([]rune(w)) <= width {
+			cur += " " + w
+		} else {
+			lines = append(lines, cur)
+			cur = w
+		}
+	}
+	lines = append(lines, cur)
+	for i, l := range lines {
+		if len([]rune(l)) > width {
+			lines[i] = truncate(l, width)
+		}
+	}
+	return lines
+}
+
+// overlayContentWidth returns the usable text width for a bordered overlay
+// box styled with Padding(1, 2) — i.e. what to pass to Style.Width — sized
+// to comfortably fit inside the terminal. Falls back to desired when
+// m.width is 0/unknown (e.g. before the first WindowSizeMsg).
+func (m Model) overlayContentWidth(desired int) int {
+	const overhead = 6 // rounded border (1 each side) + padding (2 each side)
+	if m.width > 0 {
+		maxTotal := m.width - 2 // small margin so the box never touches the frame edge
+		if maxTotal < overhead+10 {
+			maxTotal = overhead + 10
+		}
+		if maxContent := maxTotal - overhead; maxContent < desired {
+			desired = maxContent
+		}
+	}
+	if desired < 20 {
+		desired = 20
+	}
+	return desired
+}
+
+// overlayMaxContentHeight returns how many lines of box content (inside the
+// border and Padding(1, 2)) an overlay can use without exceeding the
+// terminal height. Falls back to fallback when m.height is 0/unknown.
+func (m Model) overlayMaxContentHeight(fallback int) int {
+	const overhead = 4 // border (top+bottom) + padding (top+bottom, 1 each)
+	if m.height > 0 {
+		h := m.height - overhead - 2 // small margin so it never touches the frame edge
+		if h < 3 {
+			h = 3
+		}
+		return h
+	}
+	return fallback
+}
+
+// clampOverlayHeight trims lines to the terminal's available overlay
+// height for overlays too simple to warrant scrolling (new-dir / update
+// popups). Drops from the end and marks the drop with a trailing "…" line.
+func (m Model) clampOverlayHeight(lines []string) []string {
+	maxH := m.overlayMaxContentHeight(len(lines))
+	if len(lines) <= maxH {
+		return lines
+	}
+	if maxH < 1 {
+		maxH = 1
+	}
+	out := append([]string{}, lines[:maxH-1]...)
+	out = append(out, "…")
+	return out
 }
 
 // firstLine returns the first non-empty line of s, or err's message if s is empty.
@@ -1449,14 +1579,30 @@ func (m Model) View() string {
 
 	previewContent := m.previewVP.View()
 
-	// Help bar
-	helpText := "↑↓ move · → open · ← back · ↵ switch · ^o opencode · ^e editor · ^t new tab · ^x explorer · ^r pull · ^f favorite · ^g favorites view · 1-9 highlight favorite (empty filter) · tab git/files · ^k new dir (files) · ? help · esc back/quit · ^c quit · ^u clear · ^d/^b scroll"
-	if m.mdToPdfBin != "" {
-		helpText += " · ^l md live preview (files, .md)"
-	}
+	// Help bar — ordered by priority (most useful first). Segments are
+	// appended only while they still fit within m.width; whole segments are
+	// dropped (never cut mid-word) and a trailing "…" marks any drop.
+	segs := []string{"? help"}
 	if m.latestVersion != "" {
-		helpText += " · ^v update available"
+		segs = append(segs, "^v update")
 	}
+	segs = append(segs,
+		"↑↓ move", "→ open", "← back", "↵ switch",
+		"esc back/quit", "^c quit",
+		"tab git/files",
+		"^o opencode", "^e editor",
+		"^f favorite", "^g favorites",
+		"^r pull",
+		"1-9 fav (empty filter)",
+		"^k new dir (files)",
+		"^u clear filter",
+		"^d/^b scroll",
+		"^t new tab", "^x explorer",
+	)
+	if m.mdToPdfBin != "" {
+		segs = append(segs, "^l md preview")
+	}
+	helpText := buildHelpBar(segs, m.width)
 	if m.pulling {
 		helpText = "pulling…"
 	} else if m.pullStatus != "" {
@@ -1496,33 +1642,39 @@ func (m Model) renderNewDirOverlay(background string) string {
 	titleStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	errStyle := r.NewStyle().Foreground(lipgloss.Color("9"))
 
-	var sb strings.Builder
-	sb.WriteString(titleStyle.Render("New directory in " + m.filesDir))
-	sb.WriteString("\n\n")
-	sb.WriteString(m.newDirInput.View())
-	if m.newDirError != "" {
-		sb.WriteString("\n\n")
-		sb.WriteString(errStyle.Render(m.newDirError))
+	contentW := m.overlayContentWidth(60)
+
+	lines := []string{
+		titleStyle.Render("New directory in " + truncate(m.filesDir, contentW-len("New directory in "))),
+		"",
+		m.newDirInput.View(),
 	}
-	sb.WriteString("\n\n")
-	sb.WriteString(m.styles.sep.Render("Enter: create · Esc: cancel"))
+	if m.newDirError != "" {
+		lines = append(lines, "", errStyle.Render(m.newDirError))
+	}
+	lines = append(lines, "", m.styles.sep.Render("Enter: create · Esc: cancel"))
+	lines = m.clampOverlayHeight(lines)
 
 	box := r.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("12")).
 		Padding(1, 2).
-		Width(60).
-		Render(sb.String())
+		Width(contentW).
+		Render(strings.Join(lines, "\n"))
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
 		lipgloss.WithWhitespaceChars(" "), lipgloss.WithWhitespaceForeground(lipgloss.Color("0")))
 }
 
-// renderHelpOverlay draws a bordered popup listing every keybinding,
-// centered over the given background content.
-func (m Model) renderHelpOverlay(background string) string {
+// helpOverlayLayout builds the (already-styled) content lines for the help
+// overlay — sections, key column, and word-wrapped descriptions sized to
+// the box's actual width — and reports how many lines fit at once given the
+// current terminal height. If descriptions wrap, continuation lines are
+// indented under the description column rather than the key column. If the
+// full content (with blank separators between sections) doesn't fit, blank
+// separators are dropped first before the caller falls back to scrolling.
+func (m Model) helpOverlayLayout() (lines []string, availContentH int) {
 	r := m.styles.renderer
-	titleStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	keyStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 	descStyle := r.NewStyle().Foreground(lipgloss.Color("7"))
 	sectionStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("8"))
@@ -1531,15 +1683,14 @@ func (m Model) renderHelpOverlay(background string) string {
 	row := func(key, desc string) kb { return kb{key, desc} }
 
 	rightPaneRows := []kb{
-		row("Tab", "Toggle between Git view and Files view"),
+		row("Tab", "Toggle Git/Files view"),
 		row("Ctrl+D / PgDn", "Scroll preview down"),
 		row("Ctrl+B / PgUp", "Scroll preview up"),
 		row("Ctrl+R", "git pull the highlighted repo"),
-		row("Ctrl+K", "Files view: create a new directory in the current folder"),
+		row("Ctrl+K", "Files: create a new directory"),
 	}
 	if m.mdToPdfBin != "" {
-		rightPaneRows = append(rightPaneRows, row("Ctrl+L",
-			"Files view: open highlighted .md file in editor + start md-to-pdf live preview"))
+		rightPaneRows = append(rightPaneRows, row("Ctrl+L", "Files: open .md + start live PDF preview"))
 	}
 
 	sections := []struct {
@@ -1548,22 +1699,22 @@ func (m Model) renderHelpOverlay(background string) string {
 	}{
 		{"Navigation", []kb{
 			row("↑ / ↓, Ctrl+P/N", "Move cursor up/down"),
-			row("→ (Right)", "Descend into folder / enter directory (files view)"),
-			row("← (Left)", "Go back / go up a directory (files view)"),
-			row("Enter", "Select project & cd, or enter directory (files view)"),
-			row("Esc", "Go back one level, or cancel at root"),
+			row("→ (Right)", "Descend into folder / directory (files)"),
+			row("← (Left)", "Go back / up a directory (files)"),
+			row("Enter", "Select project & cd, or open directory"),
+			row("Esc", "Go back a level, or cancel at root"),
 			row("Ctrl+C", "Cancel immediately (any depth)"),
 		}},
 		{"Launch shortcuts", []kb{
-			row("Ctrl+O", "Select project, cd, and launch opencode"),
-			row("Ctrl+E", "Open project in configured editor (new window, pw stays open)"),
-			row("Ctrl+T", "Open a new Windows Terminal tab at this path (same shell)"),
-			row("Ctrl+X", "Open this path in Windows Explorer (Windows/WSL only)"),
+			row("Ctrl+O", "Select project, cd, launch opencode"),
+			row("Ctrl+E", "Open project in configured editor"),
+			row("Ctrl+T", "New Windows Terminal tab (same shell)"),
+			row("Ctrl+X", "Open path in Explorer (Windows/WSL)"),
 		}},
 		{"Favorites", []kb{
 			row("Ctrl+F", "Toggle favorite on highlighted project"),
 			row("Ctrl+G", "Toggle favorites-only view"),
-			row("1 .. 9", "In favorites-only view with an empty filter: move cursor to the Nth favorite (then Enter/Ctrl+O/etc. to act on it)"),
+			row("1 .. 9", "Jump to Nth favorite (favorites view, empty filter)"),
 		}},
 		{"Right pane", rightPaneRows},
 		{"Filter", []kb{
@@ -1576,29 +1727,114 @@ func (m Model) renderHelpOverlay(background string) string {
 	}
 	if m.latestVersion != "" {
 		misc := &sections[len(sections)-1]
-		misc.keys = append(misc.keys, row("Ctrl+V", "Show update available details"))
+		misc.keys = append(misc.keys, row("Ctrl+V", "Show update details"))
+	}
+
+	// Key column width: longest key label, capped so descriptions keep
+	// reasonable room even in wide terminals.
+	keyW := 4
+	for _, sec := range sections {
+		for _, k := range sec.keys {
+			if w := len([]rune(k.key)); w > keyW {
+				keyW = w
+			}
+		}
+	}
+	if keyW > 20 {
+		keyW = 20
+	}
+
+	const rowIndent = 2
+	const keyDescGap = 2
+	contentW := m.overlayContentWidth(78)
+	descW := contentW - rowIndent - keyW - keyDescGap
+	if descW < 12 {
+		descW = 12
+	}
+
+	build := func(withBlanks bool) []string {
+		var out []string
+		indent := strings.Repeat(" ", rowIndent+keyW+keyDescGap)
+		for i, sec := range sections {
+			if i > 0 && withBlanks {
+				out = append(out, "")
+			}
+			out = append(out, sectionStyle.Render(sec.title))
+			for _, k := range sec.keys {
+				keyCol := keyStyle.Render(fmt.Sprintf("%-*s", keyW, k.key))
+				for j, dl := range wrapWords(k.desc, descW) {
+					if j == 0 {
+						out = append(out, strings.Repeat(" ", rowIndent)+keyCol+strings.Repeat(" ", keyDescGap)+descStyle.Render(dl))
+					} else {
+						out = append(out, indent+descStyle.Render(dl))
+					}
+				}
+			}
+		}
+		return out
+	}
+
+	const chromeLines = 4 // title, blank, blank-before-footer, footer
+	availH := m.overlayMaxContentHeight(200) - chromeLines
+	if availH < 1 {
+		availH = 1
+	}
+
+	lines = build(true)
+	if len(lines) > availH {
+		lines = build(false)
+	}
+	return lines, availH
+}
+
+// renderHelpOverlay draws a bordered popup listing every keybinding,
+// centered over the given background content. Sized to the terminal; if
+// the content is still too tall after compacting, it becomes scrollable
+// with ↑/↓ (any other key still closes it — see Update()).
+func (m Model) renderHelpOverlay(background string) string {
+	r := m.styles.renderer
+	titleStyle := r.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+
+	lines, availH := m.helpOverlayLayout()
+	scroll := len(lines) > availH
+
+	maxOffset := len(lines) - availH
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	offset := m.helpScroll
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	visible := lines
+	if scroll {
+		end := offset + availH
+		if end > len(lines) {
+			end = len(lines)
+		}
+		visible = lines[offset:end]
+	}
+
+	footer := "Press any key to close"
+	if scroll {
+		footer = "↑↓ scroll · any other key to close"
 	}
 
 	var sb strings.Builder
 	sb.WriteString(titleStyle.Render("Keybindings"))
 	sb.WriteString("\n\n")
-	for i, sec := range sections {
-		if i > 0 {
-			sb.WriteString("\n")
-		}
-		sb.WriteString(sectionStyle.Render(sec.title))
-		sb.WriteString("\n")
-		for _, k := range sec.keys {
-			sb.WriteString(fmt.Sprintf("  %s  %s\n", keyStyle.Render(fmt.Sprintf("%-22s", k.key)), descStyle.Render(k.desc)))
-		}
-	}
-	sb.WriteString("\n")
-	sb.WriteString(m.styles.sep.Render("Press any key to close"))
+	sb.WriteString(strings.Join(visible, "\n"))
+	sb.WriteString("\n\n")
+	sb.WriteString(m.styles.sep.Render(footer))
 
 	box := r.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("12")).
 		Padding(1, 2).
+		Width(m.overlayContentWidth(78)).
 		Render(sb.String())
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
@@ -1616,36 +1852,30 @@ func (m Model) renderUpdateOverlay(background string) string {
 	codeStyle := r.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color("236")).Padding(0, 1)
 	linkStyle := r.NewStyle().Foreground(lipgloss.Color("12")).Underline(true)
 
-	var sb strings.Builder
-	sb.WriteString(titleStyle.Render("Update available"))
-	sb.WriteString("\n\n")
-	sb.WriteString(verStyle.Render("v"+m.version) + m.styles.sep.Render(" → ") + newVerStyle.Render("v"+m.latestVersion))
-	sb.WriteString("\n\n")
-	sb.WriteString(m.styles.sep.Render("Run this to update:"))
-	sb.WriteString("\n\n")
-	sb.WriteString(codeStyle.Render("cd /path/to/projectswitcher") + "\n")
-	sb.WriteString(codeStyle.Render("git pull && make install"))
-	sb.WriteString("\n\n")
-	sb.WriteString(m.styles.sep.Render("Release notes: ") + linkStyle.Render("https://github.com/ydakilux/projectswitcher/releases"))
-	sb.WriteString("\n\n")
-	sb.WriteString(m.styles.sep.Render("esc to close"))
+	contentW := m.overlayContentWidth(56)
 
-	// Keep the box comfortably narrower than very small terminals so it
-	// never forces wrapping or overflows the placed area.
-	boxW := 56
-	if m.width > 0 && m.width-4 < boxW {
-		boxW = m.width - 4
+	lines := []string{
+		titleStyle.Render("Update available"),
+		"",
+		verStyle.Render("v"+m.version) + m.styles.sep.Render(" → ") + newVerStyle.Render("v"+m.latestVersion),
+		"",
+		m.styles.sep.Render("Run this to update:"),
+		"",
+		codeStyle.Render(truncate("cd /path/to/projectswitcher", contentW-2)),
+		codeStyle.Render(truncate("git pull && make install", contentW-2)),
+		"",
+		m.styles.sep.Render("Release notes: ") + linkStyle.Render(truncate("https://github.com/ydakilux/projectswitcher/releases", contentW-16)),
+		"",
+		m.styles.sep.Render("esc to close"),
 	}
-	if boxW < 20 {
-		boxW = 20
-	}
+	lines = m.clampOverlayHeight(lines)
 
 	box := r.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("12")).
 		Padding(1, 2).
-		Width(boxW).
-		Render(sb.String())
+		Width(contentW).
+		Render(strings.Join(lines, "\n"))
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box,
 		lipgloss.WithWhitespaceChars(" "), lipgloss.WithWhitespaceForeground(lipgloss.Color("0")))

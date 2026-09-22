@@ -161,6 +161,13 @@ Requires `explorer.exe` on `PATH`. Not supported outside Windows/WSL.
 
 ## Keybindings
 
+The bottom status/help bar is adaptive: shortcuts are packed in by priority
+only as far as they fit the terminal width, whole segments are dropped
+(never cut mid-word), and a trailing `…` marks truncation. `? help` always
+comes first so the full keybindings popup stays discoverable even on a
+narrow terminal, followed by `^v update` whenever a newer version is
+available.
+
 | Key | Action |
 |-----|--------|
 | Type anything | Filter projects (fuzzy) |
@@ -237,6 +244,10 @@ new version, the commands to update (`cd /path/to/projectswitcher` then
 [releases page](https://github.com/ydakilux/projectswitcher/releases).
 Dismiss it with `Esc` or any other key. `Ctrl+V` only does anything (and
 only shows up in the help bar/popup) when an update was actually detected.
+
+All popups (keybindings help, update available, new-directory prompt) size
+themselves from the current terminal dimensions and always stay inside the
+app frame, whatever your terminal size.
 
 Set `PW_NO_UPDATE_CHECK=1` to disable the check entirely.
 
