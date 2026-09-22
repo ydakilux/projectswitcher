@@ -1427,12 +1427,15 @@ func (m Model) View() string {
 	if m.latestVersion != "" {
 		verText = "v" + m.version + " → v" + m.latestVersion
 	}
-	avail := m.width - len([]rune(verText)) - 1
+	avail := m.width - len([]rune(verText)) - 2
 	if avail < 1 {
 		avail = 1
 	}
 	helpText = truncate(helpText, avail)
 	pad := m.width - len([]rune(helpText)) - len([]rune(verText)) - 1
+	if pad < 1 && m.width > len([]rune(verText))+1 {
+		pad = 1
+	}
 	var help string
 	if pad > 0 {
 		verRendered := m.styles.help.Render(verText)
